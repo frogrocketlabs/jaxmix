@@ -1,4 +1,4 @@
-from genspn.distributions import Normal, Categorical, Dirichlet, NormalInverseGamma, Mixed, logpdf, posterior
+from genspn.distributions import Normal, Categorical, Dirichlet, NormalInverseGamma, Mixed, logpdf, posterior, sample
 import jax.numpy as jnp
 import jax
 
@@ -85,6 +85,24 @@ def test_posterior_nig_cluster():
     assert jnp.allclose(ln, h_prime.l[idxs].ravel())
     assert jnp.allclose(an, h_prime.a[idxs].ravel())
     assert jnp.allclose(bn, h_prime.b[idxs].ravel())
+
+def test_posterior_nig_bimodal():
+    n = 100
+    n_dim = 2
+    max_clusters = 10
+    key = jax.random.PRNGKey(1234)
+    keys = jax.random.split(key, 6)
+    n_data0 = jax.random.normal(keys[0], (n, n_dim)) * .1
+    n_data1 = 1 + .1 * jax.random.normal(keys[1], (n, n_dim))
+    data = jnp.concatenate((n_data0, n_data1))
+
+    c = jnp.tile(jnp.array([0, max_clusters]), n)
+    nig = NormalInverseGamma(m=jnp.zeros(2), l=jnp.ones(2), a=jnp.ones(2), b=jnp.ones(2))
+    h_prime = posterior(nig, data, c, 2*max_clusters)
+    theta = sample(keys[2], h_prime)
+
+    assert jnp.all(theta.std[0] > 1)
+    assert jnp.all(theta.std[10] > 1)
 
 def test_normal():
     mu = jnp.array([0.0, 1.0])
