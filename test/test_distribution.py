@@ -1,5 +1,6 @@
-from genspn.distributions import Normal, Categorical, Dirichlet, Mixed, logpdf, posterior
+from genspn.distributions import Normal, Categorical, Dirichlet, NormalInverseGamma, Mixed, logpdf, posterior
 import jax.numpy as jnp
+import jax
 
 
 def test_posterior_dirichlet():
@@ -21,8 +22,38 @@ def test_posterior_dirichlet():
     assert jnp.all(dirichlet_posterior.alpha[1] == jnp.array([3 + 3, 4 + 1, -jnp.inf]))
 
 
-def test_posterior_nic2():
-    pass
+def test_posterior_nig():
+    # adapted from cgpm https://github.com/probcomp/cgpm/blob/master/tests/test_teh_murphy.py
+    n = jnp.array(100)
+    n_dim = 4
+    key = jax.random.PRNGKey(1234)
+    x = jax.random.normal(key, shape=(n, n_dim))
+    sum_x = jnp.sum(x, axis=0)
+    sum_x_sq = jnp.sum(x**2, axis=0)
+
+    all_m = jnp.array((1., 7., .43, 1.2))
+    all_l = jnp.array((2., 18., 3., 11.))
+    all_a = jnp.array((2., .3, 7., 4.))
+    all_b = jnp.array((1., 3., 7.5, 22.5))
+
+    h = NormalInverseGamma(all_m, all_l, all_a, all_b)
+    h_prime = posterior(h, n, sum_x, sum_x_sq)
+
+    def check_posterior(x, mu, l, a, b):
+        xbar = jnp.mean(x)
+        ln = l + n
+        an = a + n/2.
+        mun = (l*mu+n*xbar)/(l+n)
+        bn = b + .5*jnp.sum((x-xbar)**2) + l*n*(xbar-mu)**2 / (2*(l+n))
+        return mun, ln, an, bn
+
+    mun, ln, an, bn = jax.vmap(check_posterior, in_axes=(1, 0, 0, 0, 0))(x, all_m, all_l, all_a, all_b)
+
+    assert jnp.allclose(mun, h_prime.m)
+    assert jnp.allclose(ln, h_prime.l)
+    assert jnp.allclose(an, h_prime.a)
+    assert jnp.allclose(bn, h_prime.b)
+
 
 def test_normal():
     mu = jnp.array([0.0, 1.0])
