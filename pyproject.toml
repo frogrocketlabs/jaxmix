@@ -1,0 +1,41 @@
+[project]
+name = "genspn"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Joao Loula", email = "jloula@mit.edu" }
+]
+dependencies = [
+    "keyrings-google-artifactregistry-auth>=1.1.2",
+    "equinox>=0.11.4",
+    "jaxtyping>=0.2.29",
+    "pytest>=8.2.2",
+    "plum-dispatch>=2.4.1",
+    "jaxlib[cuda12_pip]>=0.4.29",
+    "ipdb>=0.13.13",
+    "jax[cuda12]>=0.4.29",
+    "marimo>=0.6.19",
+    "altair>=5.3.0",
+    "polars>=0.20.31",
+    "pyarrow>=16.1.0",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/genspn"]
+
+[[sources]]
+name = "gcp"
+url = "https://us-west1-python.pkg.dev/probcomp-caliban/probcomp/simple/"
