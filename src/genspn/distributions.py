@@ -14,9 +14,15 @@ class NormalInverseGamma(eqx.Module):
 class Dirichlet(eqx.Module):
     alpha: Float[Array, "*batch n_dim k"]
 
+    def __getitem__(self, key):
+        return Dirichlet(alpha=self.alpha[key])
+
 class Normal(eqx.Module):
     mu: Float[Array, "*batch n_dim"]
     std: Float[Array, "*batch n_dim"]
+
+    def __getitem__(self, key):
+        return Normal(mu=self.mu[key], std=self.std[key])
 
 class Categorical(eqx.Module):
     # assumed normalized, padded
@@ -26,9 +32,30 @@ class Mixed(eqx.Module):
     normal: Normal
     categorical: Categorical
 
+    def __getitem__(self, key):
+        return Mixed(normal=self.normal[key], categorical=self.categorical[key])
+
 class MixedConjugate(eqx.Module):
     nig: NormalInverseGamma
     dirichlet: Dirichlet
+
+class GEM(eqx.Module):
+    alpha: Float[Array, "*batch"]
+    d: Float[Array, "*batch"]
+
+class Cluster(eqx.Module):
+    c: Float[Array, "*batch n"]
+    pi: Float[Array, "*batch k"]
+    f: Float[Array, "*batch k"]
+
+class Trace(eqx.Module):
+    gem: GEM
+    g: NormalInverseGamma | Dirichlet | MixedConjugate
+    cluster: Cluster
+
+type F = Categorical | Normal | Mixed
+type Datapoint = (Float[Array, "n_c"] | 
+    Int[Array, "n_d"] | tuple[Float[Array, "n_c"], Int[Array, "n_d"]])
 
 @dispatch
 def sample(key: Array, dist: Dirichlet) -> Categorical:
@@ -43,7 +70,6 @@ def sample(key: Array, dist: NormalInverseGamma) -> Normal:
 
     log_lambda = jax.random.loggamma(key, dist.a) - jnp.log(dist.b)
     log_sigma = -jnp.log(dist.l) - log_lambda
-    # log_sigma = (jnp.log(dist.b) - jax.random.loggamma(key, dist.a)) / 2
     std = jnp.exp(log_sigma/ 2)
     mu = dist.m + jax.random.normal(keys[1], shape=dist.m.shape) * std
 
@@ -117,3 +143,32 @@ def logpdf(dist: Categorical, x: Int[Array, "n_dim"]) -> Float[Array, ""]:
 @dispatch
 def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Int[Array, "n_categorical_dim"]]) -> Float[Array, ""]:
     return logpdf(dist.normal, x[0]) + logpdf(dist.categorical, x[1])
+
+@dispatch
+def logpdf(dist: GEM, pi: Float[Array, "n"], K: int) -> Float[Array, ""]:
+    betas = jnp.vmap(lambda i: 1 - pi[i] / pi[i-1])(pi)
+    betas = betas.at[0].set(pi[0])
+    logprobs = jax.vmap(jax.scipy.stats.beta.logpdf)(betas, 1-dist.d, dist.alpha + jnp.arange(len(pi)) * dist.d)
+    return jnp.sum(logprobs[:K])
+
+@dispatch
+def logpdf(dist: F, x: Datapoint, c: Int[Array, ""]) -> Float[Array, ""]:
+    dist = dist[c]
+    return logpdf(dist, x)
+
+@dispatch
+def logpdf(dist: MixedConjugate, x: Mixed)-> Float[Array, ""]:
+    return logpdf(dist.nig, x.normal) + logpdf(dist.dirichlet, x.categorical)
+
+@dispatch
+def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
+    std_logpdf = jax.scipy.stats.gamma.logpdf(x.std ** -2, dist.a, scale=1/dist.b)
+    mu_logpdf = jax.scipy.stats.norm.logpdf(x.mu, loc=dist.m, scale=x.std / jnp.sqrt(dist.l))
+    return mu_logpdf + std_logpdf
+
+@dispatch
+def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
+    return jax.scipy.stats.dirichlet.logpdf(dist.alpha, jnp.exp(x.logprobs))
+
+# @dispatch
+# def logpdf(dist: Cluster, x) -> Float[Array, "n"]:
