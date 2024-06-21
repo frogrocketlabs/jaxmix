@@ -27,7 +27,7 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
         trace.pi, k, q_split_trace.pi, max_clusters)
     logpdf_pi = jax.vmap(logpdf, in_axes=(None, 0, None))(trace.GEM, pi_split, K)
 
-    logpdf_clusters = score_trace_cluster(data, trace)
+    logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, trace)
     logpdf_except_cluster = jnp.sum(logpdf_clusters) - logpdf_clusters
 
     # score pi1 and pi2 under each proposal
@@ -41,14 +41,12 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
 
     return logpdf_pi + logpdf_except_cluster - logpdf_q_pi
 
-def score_trace_cluster(data, trace, max_clusters):
-    cluster = trace.cluster
+def score_trace_cluster(data, g, cluster, max_clusters):
     c, pi, f = cluster.c, cluster.pi, cluster.f
-    g = trace.g
 
     x_scores = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c)
-    pi_dist = Categorical(logprobs=jnp.log(pi))
-    c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c)
+    pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
+    c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c.reshape(-1, 1))
     theta_scores = jax.vmap(logpdf, in_axes=(None, 0))(g, f)
 
     xc_scores_cluster = jax.ops.segment_sum(

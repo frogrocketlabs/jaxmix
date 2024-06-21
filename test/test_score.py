@@ -1,18 +1,30 @@
-from genspn.distributions import logpdf, GEM, Normal
+from genspn.distributions import (logpdf, GEM, Normal, 
+    NormalInverseGamma, Cluster)
+from genspn.smc import score_trace_cluster
 import jax.numpy as jnp
 import jax
 
 
 def test_score_stick_breaking():
-    gem = GEM(1, 0)
-    pis0 = jnp.array([1/4, 1/4, 1/4])
+    alpha = 1
+    d = .1
+    gem = GEM(alpha, d)
+    K = 2
+    pis0 = jnp.array([1/3, 1/4, 1/8])
     pis1 = jnp.array([1/2, 1/4, 1/8])
 
-    logp0 = logpdf(gem, pis0)
-    logp1 = logpdf(gem, pis0)
+    logp0 = logpdf(gem, pis0, K)
+    logp1 = logpdf(gem, pis1, K)
 
-    pass
+    assert logp0 == (
+        jax.scipy.stats.beta.logpdf(pis0[0], 1 - d, alpha + d) +
+        jax.scipy.stats.beta.logpdf(1 - pis0[1]/pis0[0], 1 - d, alpha + 2 * d) 
+    )
 
+    assert logp1 == (
+        jax.scipy.stats.beta.logpdf(pis1[0], 1 - d, alpha + d) +
+        jax.scipy.stats.beta.logpdf(1 - pis1[1]/pis1[0], 1 - d, alpha + 2 * d) 
+    )
 
 def test_score_data():
     x = jnp.zeros((5, 6))
@@ -32,3 +44,35 @@ def test_score_data():
     assert x_logpdfs[2] == x_logpdfs[5]
     assert x_logpdfs[1] == x_logpdfs[3]
     assert x_logpdfs[0] != x_logpdfs[1]
+
+def test_score_trace_cluster():
+    x = jnp.zeros((5, 2))
+    c = jnp.array([0, 0, 0, 1, 1], dtype=int)
+    pi = jnp.array([1/2, 1/2, jnp.nan])
+    f = Normal(
+        mu=jnp.array(
+            [[0, 1],
+            [1, 1],
+            [10, 10]]
+            ), 
+        std=jnp.ones((3,2)))
+    g = NormalInverseGamma(
+        m=jnp.zeros(2), b=jnp.ones(2), a=jnp.ones(2), 
+        l=jnp.ones(2))
+    cluster = Cluster(c=c, pi=pi, f=f)
+    max_clusters = 3
+
+    logprobs = score_trace_cluster(x, g, cluster, max_clusters)
+
+    cluster0_x_prob = 3 * jax.scipy.stats.norm.logpdf(0) + \
+        3 * jax.scipy.stats.norm.logpdf(0, loc=1)
+    cluster1_x_prob = 4 * jax.scipy.stats.norm.logpdf(0, loc=1)
+
+    cluster0_theta_prob = logpdf(g, f[0])
+    cluster1_theta_prob = logpdf(g, f[1])
+
+    cluster0_prob = cluster0_x_prob + cluster0_theta_prob + 3 * jnp.log(1/2)
+    cluster1_prob = cluster1_x_prob + cluster1_theta_prob + 2 * jnp.log(1/2)
+
+    assert jnp.isclose(cluster0_prob, logprobs[0])
+    assert jnp.isclose(cluster1_prob, logprobs[1])

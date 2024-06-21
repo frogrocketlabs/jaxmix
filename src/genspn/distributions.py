@@ -146,9 +146,9 @@ def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Int[Array, "n_cat
 
 @dispatch
 def logpdf(dist: GEM, pi: Float[Array, "n"], K: int) -> Float[Array, ""]:
-    betas = jnp.vmap(lambda i: 1 - pi[i] / pi[i-1])(pi)
+    betas = jax.vmap(lambda i: 1 - pi[i] / pi[i-1])(jnp.arange(len(pi)))
     betas = betas.at[0].set(pi[0])
-    logprobs = jax.vmap(jax.scipy.stats.beta.logpdf)(betas, 1-dist.d, dist.alpha + jnp.arange(len(pi)) * dist.d)
+    logprobs = jax.vmap(jax.scipy.stats.beta.logpdf, in_axes=(0, None, 0))(betas, 1-dist.d, dist.alpha + (1 + jnp.arange(len(pi))) * dist.d)
     return jnp.sum(logprobs[:K])
 
 @dispatch
@@ -164,7 +164,7 @@ def logpdf(dist: MixedConjugate, x: Mixed)-> Float[Array, ""]:
 def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
     std_logpdf = jax.scipy.stats.gamma.logpdf(x.std ** -2, dist.a, scale=1/dist.b)
     mu_logpdf = jax.scipy.stats.norm.logpdf(x.mu, loc=dist.m, scale=x.std / jnp.sqrt(dist.l))
-    return mu_logpdf + std_logpdf
+    return jnp.sum(mu_logpdf + std_logpdf)
 
 @dispatch
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
