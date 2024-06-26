@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import jax
 import equinox as eqx
 import numpy as np
+from plum import dispatch
 from jaxtyping import Array, Float, Int
 from genspn.distributions import (NormalInverseGamma, Dirichlet, MixedConjugate, 
     posterior, sample, logpdf, Normal, Categorical, Mixed, GEM, Cluster, Trace)
@@ -17,7 +18,7 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
     if k == 0:
         return trace
     else:
-        return split_cluster(trace, k-1)
+        return split_cluster(trace, q_split_trace, k-1)
 
 def get_weights(trace, K, data, q_split_trace, max_clusters):
     # for each cluster, get the pi score
@@ -32,8 +33,14 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
 
     logpdf_q_pi = score_q_pi(q_split_trace.pi, max_clusters, trace.gem.alpha)   
 
+    Z = q_Z()
+
     # score pi1 and pi2 under each proposal
-    return logpdf_pi + logpdf_except_cluster - logpdf_q_pi
+    return Z + logpdf_pi + logpdf_except_cluster - logpdf_q_pi
+
+
+def q_Z(q_split_trace):
+    pass
 
 def score_q_pi(q_pi, max_clusters, alpha):
     q_pi_dist = Dirichlet(alpha=jnp.ones(2) * alpha/2)
@@ -65,8 +72,48 @@ def score_trace_cluster(data, g, cluster, max_clusters):
 
     return xc_scores_cluster + theta_scores
 
-def split_cluster(trace, k):
-    pass
+def split_cluster(cluster, split_clusters, k, K, max_clusters):
+    # update pi
+    pi = cluster.pi
+    pi0 = pi[k]
+    pi = pi.at[k].set(pi0 * split_clusters.pi[k])    
+    pi = pi.at[K].set(pi0 * split_clusters.pi[k + max_clusters])    
+
+    # update c
+    c = cluster.c
+    c = jnp.where(c == k, split_clusters.c, c)
+    c = jnp.where(c == k + max_clusters, K, c)
+
+    # update f
+    f = update_f(cluster.f, split_clusters.f, k, K, max_clusters)
+
+    return Cluster(c, pi, f)
+
+@dispatch
+def update_f(f0: Normal, f: Normal, k: int, K: int, max_clusters: int):
+    mu = update_vector(f0.mu, f.mu, k, K, max_clusters)
+    std = update_vector(f0.std, f.std, k, K, max_clusters)
+
+    return Normal(mu, std)
+
+@dispatch
+def update_f(f0: Categorical, f: Categorical, k: int, K: int, max_clusters: int):
+    logprobs = update_vector(f0.logprobs, f.logprobs, k, K, max_clusters)
+
+    return Categorical(logprobs)
+
+@dispatch
+def update_f(f0: Mixed, f: Mixed, k: int, K: int, max_clusters: int):
+    return Mixed(
+        update_f(f0.normal, f.normal, k, K, max_clusters),
+        update_f(f0.categorical, f.categorical, k, K, max_clusters)
+    )
+
+def update_vector(v0, split_v, k, K, max_clusters):
+    v = v0
+    v = v.at[k].set(split_v[k])
+    v = v.at[K].set(split_v[k + max_clusters])
+    return v
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters'])
 def q_split(data, gibbs_iters, max_clusters, key, c0, alpha, g) -> Cluster:
@@ -83,6 +130,8 @@ def q_split(data, gibbs_iters, max_clusters, key, c0, alpha, g) -> Cluster:
     keys = jax.random.split(keys[2], gibbs_iters)
     _, q_split_trace = jax.lax.scan(partial_gibbs_step, c, keys)
 
+
+    jax.debug.breakpoint()
     return q_split_trace
 
 def make_log_likelihood_mask(c, max_clusters):
@@ -96,8 +145,7 @@ def make_log_likelihood_mask(c, max_clusters):
 def gibbs_step(assignments, key, alpha, g, data, log_likelihood_mask, max_clusters):
     subkey1, subkey2, subkey3 = jax.random.split(key, 3)
     f = gibbs_f(max_clusters, data, subkey1, g, assignments)
-    # pi = gibbs_pi(max_clusters, subkey2, alpha, c)
-    pi = jnp.array([.5, .5, .5, .5])
+    pi = gibbs_pi(max_clusters, subkey2, alpha, assignments)
 
     assignments = gibbs_c(subkey3, pi, log_likelihood_mask, f, data)
 
