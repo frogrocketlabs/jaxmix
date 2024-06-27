@@ -13,13 +13,21 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
     q_split_trace = q_split(data, gibbs_iters, max_clusters, key, trace.cluster.c, trace.gem.alpha, trace.g)
 
     cluster_weights = get_weights(trace, K, data, q_split_trace, max_clusters)
-    weights = jnp.concatenate((jnp.zeros(1), cluster_weights))
-    k = jnp.random.categorical(key, weights)
+
+    logpdf_pi = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
+    logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
+
+    stop_weight = logpdf_pi + jnp.sum(logpdf_clusters[:K-1])
+
+    weights = jnp.zeros(max_clusters + 1)
+    weights = weights.at[1:].set(cluster_weights)
+    weights = weights.at[0].set(stop_weight)
+    k = jax.random.categorical(key, weights)
 
     if k == 0:
         return trace
     else:
-        return split_cluster(trace, q_split_trace, k-1)
+        return split_cluster(trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
 
 def get_weights(trace, K, data, q_split_trace, max_clusters):
     # for each cluster, get the pi score
@@ -60,11 +68,12 @@ def q_Z(q_split_trace, data, max_clusters):
         num_segments=max_clusters)) + max_score
 
 def score_q_pi(q_pi, max_clusters, alpha):
-    q_pi_dist = Dirichlet(alpha=jnp.ones(2) * alpha/2)
-    q_pi_stack = Categorical(jnp.vstack((
-        q_pi[:max_clusters],
-        q_pi[max_clusters:],
-    )))
+    q_pi_dist = Dirichlet(alpha=jnp.ones((1, 2)) * alpha/2)
+    q_pi_stack = Categorical(
+        jnp.vstack((
+        jnp.log(q_pi[:max_clusters]),
+        jnp.log(q_pi[max_clusters:]),
+     ))[None, :])
 
     return jax.vmap(logpdf, in_axes=(None, -1))(q_pi_dist, q_pi_stack)
 
@@ -93,33 +102,33 @@ def split_cluster(cluster, split_clusters, k, K, max_clusters):
     pi = cluster.pi
     pi0 = pi[k]
     pi = pi.at[k].set(pi0 * split_clusters.pi[k])    
-    pi = pi.at[K].set(pi0 * split_clusters.pi[k + max_clusters])    
+    pi = pi.at[K - 1].set(pi0 * split_clusters.pi[k + max_clusters])    
 
     # update c
     c = cluster.c
     c = jnp.where(c == k, split_clusters.c, c)
-    c = jnp.where(c == k + max_clusters, K, c)
+    c = jnp.where(c == k + max_clusters, K-1, c)
 
     # update f
-    f = update_f(cluster.f, split_clusters.f, k, K, max_clusters)
+    f = update_f(cluster.f, split_clusters.f, k, K-1, max_clusters)
 
     return Cluster(c, pi, f)
 
 @dispatch
-def update_f(f0: Normal, f: Normal, k: int, K: int, max_clusters: int):
+def update_f(f0: Normal, f: Normal, k: Int[Array, ""], K: int, max_clusters: int):
     mu = update_vector(f0.mu, f.mu, k, K, max_clusters)
     std = update_vector(f0.std, f.std, k, K, max_clusters)
 
     return Normal(mu, std)
 
 @dispatch
-def update_f(f0: Categorical, f: Categorical, k: int, K: int, max_clusters: int):
+def update_f(f0: Categorical, f: Categorical, k: Int[Array, ""], K: int, max_clusters: int):
     logprobs = update_vector(f0.logprobs, f.logprobs, k, K, max_clusters)
 
     return Categorical(logprobs)
 
 @dispatch
-def update_f(f0: Mixed, f: Mixed, k: int, K: int, max_clusters: int):
+def update_f(f0: Mixed, f: Mixed, k: Int[Array, ""], K: int, max_clusters: int):
     return Mixed(
         update_f(f0.normal, f.normal, k, K, max_clusters),
         update_f(f0.categorical, f.categorical, k, K, max_clusters)

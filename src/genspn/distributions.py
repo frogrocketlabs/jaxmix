@@ -173,7 +173,7 @@ def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
 
 @dispatch
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
-    return jax.scipy.stats.dirichlet.logpdf(jnp.exp(x.logprobs), dist.alpha)
+    return jnp.sum(jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha))
 
 # @dispatch
 # def logpdf(dist: Cluster, x) -> Float[Array, "n"]:
