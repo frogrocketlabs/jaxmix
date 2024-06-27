@@ -1,9 +1,31 @@
 from genspn.distributions import (logpdf, GEM, Normal, 
     NormalInverseGamma, Cluster)
-from genspn.smc import score_trace_cluster
+from genspn.smc import score_trace_cluster, make_pi, score_q_pi, q_Z
 import jax.numpy as jnp
 import jax
 
+def test_score_q_pi():
+    q_pi = jnp.log(jnp.array([
+        [1/2, 1/2], 
+        [3/4, 1/4], 
+        [1, 0]]))
+    max_clusters = 3
+    alpha = 2
+    q_pi_logpdf = score_q_pi(q_pi, max_clusters, alpha)
+    true_logpdf = jax.scipy.stats.dirichlet.logpdf(
+        jnp.array([1/2, 1/2]),
+        jnp.array([1, 1])
+    )
+    assert q_pi_logpdf[0] == true_logpdf
+    assert q_pi_logpdf[1] == true_logpdf
+
+def test_make_pi():
+    max_clusters = 3
+    pi0 = jnp.array([1/2, 1/3, 0, 0, 0, 0])
+    q_pi = jnp.array([1/2, 1/2, 3/4, 1/2, 0, 0])
+    new_pi = make_pi(pi0, k=0, pi_split=q_pi, max_clusters=max_clusters)
+
+    assert jnp.allclose(new_pi, jnp.array([1/3, 1/4, 1/4, 0, 0, 0]))
 
 def test_score_stick_breaking():
     alpha = 1
@@ -76,3 +98,37 @@ def test_score_trace_cluster():
 
     assert jnp.isclose(cluster0_prob, logprobs[0])
     assert jnp.isclose(cluster1_prob, logprobs[1])
+
+def test_q_Z():
+    x = jnp.zeros((5, 2))
+    max_clusters = 2
+    c = jnp.array([0, 0, 2, 1, 3], dtype=int)
+    pi = jnp.array([1/2, 1/3, 1/2, 2/3])
+    f = Normal(
+        mu=jnp.array(
+            [[0, 1],
+            [1, 1],
+            [10, 10],
+            [0, 10]]
+            ), 
+        std=jnp.ones((4,2)))
+    
+    cluster = Cluster(c=c, pi=pi, f=f)
+
+    Z = q_Z(cluster, x, max_clusters)
+
+    z0 = jnp.array([
+        jnp.log(1/2) + jax.scipy.stats.norm.logpdf(0) + jax.scipy.stats.norm.logpdf(1),
+        jnp.log(1/2) + jax.scipy.stats.norm.logpdf(10) + jax.scipy.stats.norm.logpdf(10),
+    ])
+    z0 = jnp.log(jnp.sum(3 * jnp.exp(z0)))
+
+
+    z1 = jnp.array([
+        jnp.log(1/3) + jax.scipy.stats.norm.logpdf(1) + jax.scipy.stats.norm.logpdf(1),
+        jnp.log(2/3) + jax.scipy.stats.norm.logpdf(0) + jax.scipy.stats.norm.logpdf(10),
+    ])
+    z1 = jnp.log(jnp.sum(2 * jnp.exp(z1)))
+
+    assert jnp.isclose(z0, Z[0])
+    assert jnp.isclose(z1, Z[1])

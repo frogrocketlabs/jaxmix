@@ -12,7 +12,8 @@ from functools import partial
 def step(data, gibbs_iters, key, K, trace, max_clusters):
     q_split_trace = q_split(data, gibbs_iters, max_clusters, key, trace)
 
-    weights = get_weights(trace, q_split_trace, max_clusters)
+    cluster_weights = get_weights(trace, K, data, q_split_trace, max_clusters)
+    weights = jnp.concatenate((jnp.zeros(1), cluster_weights))
     k = jnp.random.categorical(key, weights)
 
     if k == 0:
@@ -31,16 +32,32 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
     logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, trace)
     logpdf_except_cluster = jnp.sum(logpdf_clusters) - logpdf_clusters
 
-    logpdf_q_pi = score_q_pi(q_split_trace.pi, max_clusters, trace.gem.alpha)   
+    logpdf_q_pi = score_q_pi(q_split_trace.pi[-1], max_clusters, trace.gem.alpha)   
 
-    Z = q_Z()
+    Z = q_Z(q_split_trace[-1], data, max_clusters)
 
     # score pi1 and pi2 under each proposal
     return Z + logpdf_pi + logpdf_except_cluster - logpdf_q_pi
 
 
-def q_Z(q_split_trace):
-    pass
+def q_Z(q_split_trace, data, max_clusters):
+    c, pi, f = q_split_trace.c, q_split_trace.pi, q_split_trace.f
+    c_mod = jnp.mod(c, max_clusters)
+    x_scores0 = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c_mod)
+    x_scores1 = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c_mod + max_clusters)
+
+    pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
+    c_scores0 = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c_mod.reshape(-1, 1))
+    c_scores1 = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, max_clusters + c_mod.reshape(-1, 1))
+
+    scores0 = x_scores0 + c_scores0
+    scores1 = x_scores1 + c_scores1
+
+    scores = jnp.logaddexp(scores0, scores1)
+    max_score = jnp.max(scores)
+    return jnp.log(jax.ops.segment_sum(
+        jnp.exp(scores - max_score), c_mod, 
+        num_segments=max_clusters)) + max_score
 
 def score_q_pi(q_pi, max_clusters, alpha):
     q_pi_dist = Dirichlet(alpha=jnp.ones(2) * alpha/2)
@@ -171,6 +188,3 @@ def gibbs_pi(max_clusters, key, alpha, c):
     pi_pairs = pi.reshape((2, -1))
     pi_pairs = pi_pairs / jnp.sum(pi_pairs, axis=0)
     return pi_pairs.reshape(-1)
-
-def score_clusters(c, pi, theta, x, max_clusters):
-    pass
