@@ -8,7 +8,18 @@ from genspn.distributions import (NormalInverseGamma, Dirichlet, MixedConjugate,
     posterior, sample, logpdf, Normal, Categorical, Mixed, GEM, Cluster, Trace)
 from functools import partial
 
+# def smc(trace, max_K):
+#     for i in range(2):
+#         # sample random assignments to begin with
+#         # note: we should flush the cs so they're 1:N
+#         new_cluster = step(data, trace=trace, gibbs_iters=iters, max_clusters=3, key=keys[6 + i], K=i+2)
+#         trace = Trace(
+#             gem=gem,
+#             g=g,
+#             cluster=new_cluster
+#         )
 
+@partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters'])
 def step(data, gibbs_iters, key, K, trace, max_clusters):
     q_split_trace = q_split(data, gibbs_iters, max_clusters, key, trace.cluster.c, trace.gem.alpha, trace.g)
 
@@ -17,17 +28,19 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
     logpdf_pi = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
     logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
 
-    stop_weight = logpdf_pi + jnp.sum(logpdf_clusters[:K-1])
+    idx = jnp.arange(logpdf_clusters.shape[0])
+    logpdf_clusters = jnp.where(idx < K-1, logpdf_clusters, 0) 
+    stop_weight = logpdf_pi + jnp.sum(logpdf_clusters)
 
     weights = jnp.zeros(max_clusters + 1)
     weights = weights.at[1:].set(cluster_weights)
     weights = weights.at[0].set(stop_weight)
     k = jax.random.categorical(key, weights)
 
-    if k == 0:
-        return trace
-    else:
-        return split_cluster(trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
+    return jax.lax.cond(k==0, 
+        lambda cluster0, cluster1, k, K, max_clusters: trace.cluster, 
+        lambda  cluster0, cluster1, k, K, max_clusters: split_cluster(cluster0, cluster1, k, K, max_clusters),
+        trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
 
 def get_weights(trace, K, data, q_split_trace, max_clusters):
     # for each cluster, get the pi score
@@ -115,20 +128,20 @@ def split_cluster(cluster, split_clusters, k, K, max_clusters):
     return Cluster(c, pi, f)
 
 @dispatch
-def update_f(f0: Normal, f: Normal, k: Int[Array, ""], K: int, max_clusters: int):
+def update_f(f0: Normal, f: Normal, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
     mu = update_vector(f0.mu, f.mu, k, K, max_clusters)
     std = update_vector(f0.std, f.std, k, K, max_clusters)
 
     return Normal(mu, std)
 
 @dispatch
-def update_f(f0: Categorical, f: Categorical, k: Int[Array, ""], K: int, max_clusters: int):
+def update_f(f0: Categorical, f: Categorical, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
     logprobs = update_vector(f0.logprobs, f.logprobs, k, K, max_clusters)
 
     return Categorical(logprobs)
 
 @dispatch
-def update_f(f0: Mixed, f: Mixed, k: Int[Array, ""], K: int, max_clusters: int):
+def update_f(f0: Mixed, f: Mixed, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
     return Mixed(
         update_f(f0.normal, f.normal, k, K, max_clusters),
         update_f(f0.categorical, f.categorical, k, K, max_clusters)

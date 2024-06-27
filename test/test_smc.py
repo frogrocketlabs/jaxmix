@@ -5,10 +5,10 @@ from genspn.smc import q_split, split_cluster, step
 from genspn.distributions import NormalInverseGamma, Dirichlet, MixedConjugate, posterior, sample, logpdf, Categorical, Cluster, Trace, GEM
 
 def test_split_cluster():
-    max_clusters = 3
+    max_clusters = jnp.array(3)
     n = 4
     k = jnp.array(1)
-    K = 3
+    K = jnp.array(3)
 
     c0 = jnp.array([0, 0, 1, 1])
     pi0 = jnp.array([.5, .5, 0, 0, 0, 0])

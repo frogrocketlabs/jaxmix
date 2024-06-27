@@ -150,11 +150,13 @@ def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Int[Array, "n_cat
     return logpdf(dist.normal, x[0]) + logpdf(dist.categorical, x[1])
 
 @dispatch
-def logpdf(dist: GEM, pi: Float[Array, "n"], K: int) -> Float[Array, ""]:
+def logpdf(dist: GEM, pi: Float[Array, "n"], K: Int[Array, ""]) -> Float[Array, ""]:
     betas = jax.vmap(lambda i: 1 - pi[i] / pi[i-1])(jnp.arange(len(pi)))
     betas = betas.at[0].set(pi[0])
     logprobs = jax.vmap(jax.scipy.stats.beta.logpdf, in_axes=(0, None, 0))(betas, 1-dist.d, dist.alpha + (1 + jnp.arange(len(pi))) * dist.d)
-    return jnp.sum(logprobs[:K])
+    idx = jnp.arange(logprobs.shape[0])
+    logprobs = jnp.where(idx < K, logprobs, 0) 
+    return jnp.sum(logprobs)
 
 @dispatch
 def logpdf(dist: F, x: Datapoint, c: Int[Array, ""]) -> Float[Array, ""]:
