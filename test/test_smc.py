@@ -8,7 +8,7 @@ def test_split_cluster():
     max_clusters = 3
     n = 4
     k = jnp.array(1)
-    K = 2
+    K = 3
 
     c0 = jnp.array([0, 0, 1, 1])
     pi0 = jnp.array([.5, .5, 0, 0, 0, 0])
