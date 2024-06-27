@@ -5,19 +5,21 @@ import jax.numpy as jnp
 import jax
 
 def test_score_q_pi():
-    q_pi = jnp.log(jnp.array([
-        [1/2, 1/2], 
-        [3/4, 1/4], 
-        [1, 0]]))
+    q_pi = jnp.log(jnp.array([1/2, 3/4, 1, 1/2, 1/4, 0]))
     max_clusters = 3
-    alpha = 2
+    alpha = 10
     q_pi_logpdf = score_q_pi(q_pi, max_clusters, alpha)
-    true_logpdf = jax.scipy.stats.dirichlet.logpdf(
+    true_logpdf0 = jax.scipy.stats.dirichlet.logpdf(
         jnp.array([1/2, 1/2]),
-        jnp.array([1, 1])
+        jnp.array([alpha/2, alpha/2])
     )
-    assert q_pi_logpdf[0] == true_logpdf
-    assert q_pi_logpdf[1] == true_logpdf
+
+    true_logpdf1 = jax.scipy.stats.dirichlet.logpdf(
+        jnp.array([3/4, 1/4]),
+        jnp.array([alpha/2, alpha/2])
+    )
+    assert q_pi_logpdf[0] == true_logpdf0
+    assert q_pi_logpdf[1] == true_logpdf1
 
 def test_make_pi():
     max_clusters = 3

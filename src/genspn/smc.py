@@ -10,7 +10,7 @@ from functools import partial
 
 
 def step(data, gibbs_iters, key, K, trace, max_clusters):
-    q_split_trace = q_split(data, gibbs_iters, max_clusters, key, trace)
+    q_split_trace = q_split(data, gibbs_iters, max_clusters, key, trace.cluster.c, trace.gem.alpha, trace.g)
 
     cluster_weights = get_weights(trace, K, data, q_split_trace, max_clusters)
     weights = jnp.concatenate((jnp.zeros(1), cluster_weights))
@@ -26,10 +26,10 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
     # I think the idea will be to make a separate pi vector for each 
     # possible cluster split
     pi_split = jax.vmap(make_pi, in_axes=(None, 0, None, None))(
-        trace.pi, jnp.arange(max_clusters), q_split_trace.pi[-1], max_clusters)
+        trace.cluster.pi, jnp.arange(max_clusters), q_split_trace.pi[-1], max_clusters)
     logpdf_pi = jax.vmap(logpdf, in_axes=(None, 0, None))(trace.gem, pi_split, K)
 
-    logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, trace)
+    logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
     logpdf_except_cluster = jnp.sum(logpdf_clusters) - logpdf_clusters
 
     logpdf_q_pi = score_q_pi(q_split_trace.pi[-1], max_clusters, trace.gem.alpha)   
@@ -61,12 +61,12 @@ def q_Z(q_split_trace, data, max_clusters):
 
 def score_q_pi(q_pi, max_clusters, alpha):
     q_pi_dist = Dirichlet(alpha=jnp.ones(2) * alpha/2)
-    q_pi = Categorical(jnp.vstack((
+    q_pi_stack = Categorical(jnp.vstack((
         q_pi[:max_clusters],
         q_pi[max_clusters:],
     )))
 
-    return jax.vmap(logpdf, in_axes=(None, 0))(q_pi_dist, q_pi)
+    return jax.vmap(logpdf, in_axes=(None, -1))(q_pi_dist, q_pi_stack)
 
 def make_pi(pi, k, pi_split, max_clusters):
     pi_k0 = pi[k]
@@ -81,12 +81,11 @@ def score_trace_cluster(data, g, cluster, max_clusters):
     x_scores = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c)
     pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
     c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c.reshape(-1, 1))
-    theta_scores = jax.vmap(logpdf, in_axes=(None, 0))(g, f)
+    theta_scores = jax.vmap(logpdf, in_axes=(None, 0))(g, f)[:max_clusters]
 
     xc_scores_cluster = jax.ops.segment_sum(
         x_scores + c_scores, c, 
         num_segments=max_clusters)
-
     return xc_scores_cluster + theta_scores
 
 def split_cluster(cluster, split_clusters, k, K, max_clusters):
@@ -148,7 +147,6 @@ def q_split(data, gibbs_iters, max_clusters, key, c0, alpha, g) -> Cluster:
     _, q_split_trace = jax.lax.scan(partial_gibbs_step, c, keys)
 
 
-    jax.debug.breakpoint()
     return q_split_trace
 
 def make_log_likelihood_mask(c, max_clusters):

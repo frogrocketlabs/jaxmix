@@ -27,6 +27,8 @@ class Normal(eqx.Module):
 class Categorical(eqx.Module):
     # assumed normalized, padded
     logprobs: Float[Array, "*batch n_dim k"]
+    def __getitem__(self, key):
+        return Categorical(logprobs=self.logprobs[0])
 
 class Mixed(eqx.Module):
     normal: Normal
@@ -47,6 +49,9 @@ class Cluster(eqx.Module):
     c: Float[Array, "*batch n"]
     pi: Float[Array, "*batch k"]
     f: Float[Array, "*batch k"]
+
+    def __getitem__(self, key):
+        return Cluster(self.c[key], self.pi[key], self.f[key])
 
 class Trace(eqx.Module):
     gem: GEM
@@ -168,7 +173,7 @@ def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
 
 @dispatch
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
-    return jax.scipy.stats.dirichlet.logpdf(dist.alpha, jnp.exp(x.logprobs))
+    return jax.scipy.stats.dirichlet.logpdf(jnp.exp(x.logprobs), dist.alpha)
 
 # @dispatch
 # def logpdf(dist: Cluster, x) -> Float[Array, "n"]:
