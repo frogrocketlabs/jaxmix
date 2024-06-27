@@ -87,13 +87,13 @@ def test_posterior_nig_cluster():
     assert jnp.allclose(bn, h_prime.b[idxs].ravel())
 
 def test_posterior_nig_bimodal():
-    n = 100
+    n = 10000
     n_dim = 2
     max_clusters = 10
     key = jax.random.PRNGKey(1234)
     keys = jax.random.split(key, 6)
-    n_data0 = jax.random.normal(keys[0], (n, n_dim)) * .1
-    n_data1 = 1 + .1 * jax.random.normal(keys[1], (n, n_dim))
+    n_data0 = jax.random.normal(keys[0], (n, n_dim)) * 1e-5
+    n_data1 = 1 + 1e-5 * jax.random.normal(keys[1], (n, n_dim))
     data = jnp.concatenate((n_data0, n_data1))
 
     c = jnp.tile(jnp.array([0, max_clusters]), n)
@@ -101,8 +101,10 @@ def test_posterior_nig_bimodal():
     h_prime = posterior(nig, data, c, 2*max_clusters)
     theta = sample(keys[2], h_prime)
 
-    assert jnp.all(theta.std[0] > 1)
-    assert jnp.all(theta.std[10] > 1)
+    assert jnp.allclose(theta.std[0], .5, atol=1e-2)
+    assert jnp.allclose(theta.std[10], .5, atol=1e-2)
+    assert jnp.allclose(theta.mu[0], .5, atol=5e-2)
+    assert jnp.allclose(theta.mu[10], .5, atol=5e-2)
 
 def test_normal():
     mu = jnp.array([0.0, 1.0])
