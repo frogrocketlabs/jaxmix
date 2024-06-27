@@ -8,16 +8,25 @@ from genspn.distributions import (NormalInverseGamma, Dirichlet, MixedConjugate,
     posterior, sample, logpdf, Normal, Categorical, Mixed, GEM, Cluster, Trace)
 from functools import partial
 
-# def smc(trace, max_K):
-#     for i in range(2):
-#         # sample random assignments to begin with
-#         # note: we should flush the cs so they're 1:N
-#         new_cluster = step(data, trace=trace, gibbs_iters=iters, max_clusters=3, key=keys[6 + i], K=i+2)
-#         trace = Trace(
-#             gem=gem,
-#             g=g,
-#             cluster=new_cluster
-#         )
+@partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters', 'n_steps'])
+def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
+    keys = jax.random.split(key, n_steps)
+
+    def wrap_step(trace, n):
+        key = keys[n]
+        new_cluster = step(data=data, trace=trace, gibbs_iters=gibbs_iters, 
+            max_clusters=max_clusters, key=key, K=n+2)
+        trace = Trace(
+            gem=trace.gem,
+            g=trace.g,
+            cluster=new_cluster
+        )
+
+        return trace, trace
+
+    carry, trace = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
+    return trace
+
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters'])
 def step(data, gibbs_iters, key, K, trace, max_clusters):

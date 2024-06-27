@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from genspn.smc import q_split, split_cluster, step
+from genspn.smc import q_split, split_cluster, step, smc
 from genspn.distributions import NormalInverseGamma, Dirichlet, MixedConjugate, posterior, sample, logpdf, Categorical, Cluster, Trace, GEM
 
 def test_split_cluster():
@@ -85,19 +85,13 @@ def test_smc():
 
     trace = Trace(gem=gem, g=g, cluster=cluster)
 
-    for i in range(2):
-        # sample random assignments to begin with
-        # note: we should flush the cs so they're 1:N
-        new_cluster = step(data, trace=trace, gibbs_iters=iters, max_clusters=3, key=keys[6 + i], K=i+2)
-        trace = Trace(
-            gem=gem,
-            g=g,
-            cluster=new_cluster
-        )
+    trace = smc(key, trace, n_steps=2, data=data, gibbs_iters=iters, max_clusters=3)
 
-    assert jnp.all(trace.cluster.c[:100] == trace.cluster.c[0])
-    assert jnp.all(trace.cluster.c[100:200] == trace.cluster.c[100])
-    assert jnp.all(trace.cluster.c[200:] == trace.cluster.c[200])
-    assert trace.cluster.c[0] != trace.cluster.c[100]
-    assert trace.cluster.c[200] != trace.cluster.c[100]
-    assert trace.cluster.c[200] != trace.cluster.c[0]
+    c = trace.cluster.c[-1]
+
+    assert jnp.all(c[:100] == c[0])
+    assert jnp.all(c[100:200] == c[100])
+    assert jnp.all(c[200:] == c[200])
+    assert c[0] != c[100]
+    assert c[200] != c[100]
+    assert c[200] != c[0]
