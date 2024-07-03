@@ -28,7 +28,7 @@ class Categorical(eqx.Module):
     # assumed normalized, padded
     logprobs: Float[Array, "*batch n_dim k"]
     def __getitem__(self, key):
-        return Categorical(logprobs=self.logprobs[0])
+        return Categorical(logprobs=self.logprobs[key])
 
 class Mixed(eqx.Module):
     normal: Normal
@@ -139,7 +139,9 @@ def posterior(dist: Dirichlet, counts: Int[Array, "n_dim k"]) -> Dirichlet:
 
 @dispatch
 def logpdf(dist: Normal, x: Float[Array, "n_dim"]) -> Float[Array, ""]:
-    return jnp.sum(-0.5 * jnp.log(2 * jnp.pi) - jnp.log(dist.std) - 0.5 * ((x - dist.mu) / dist.std) ** 2)
+    logprob = jnp.sum(-0.5 * jnp.log(2 * jnp.pi) - jnp.log(dist.std) - 0.5 * ((x - dist.mu) / dist.std) ** 2)
+
+    return logprob
 
 @dispatch
 def logpdf(dist: Categorical, x: Int[Array, "n_dim"]) -> Float[Array, ""]:
@@ -176,6 +178,3 @@ def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
 @dispatch
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
     return jnp.sum(jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha))
-
-# @dispatch
-# def logpdf(dist: Cluster, x) -> Float[Array, "n"]:
