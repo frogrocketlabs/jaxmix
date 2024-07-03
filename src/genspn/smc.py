@@ -10,23 +10,47 @@ from functools import partial
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters', 'n_steps'])
 def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
-    keys = jax.random.split(key, n_steps)
+    smc_keys = jax.random.split(key, n_steps)
 
     def wrap_step(trace, n):
-        key = keys[n]
+        key = smc_keys[n]
+        keys = jax.random.split(key)
         new_cluster = step(data=data, trace=trace, gibbs_iters=gibbs_iters, 
-            max_clusters=max_clusters, key=key, K=n+2)
-        trace = Trace(
+            max_clusters=max_clusters, key=keys[0], K=n+2)
+        split_trace = Trace(
             gem=trace.gem,
             g=trace.g,
             cluster=new_cluster
         )
 
-        return trace, trace
+        rejuvenated_cluster = rejuvenate(keys[1], data, split_trace, gibbs_iters, max_clusters)
+        rejuvenated_trace = Trace(
+            gem=split_trace.gem,
+            g=split_trace.g,
+            cluster=rejuvenated_cluster
+        )
+        
+        return rejuvenated_trace, rejuvenated_trace
 
     carry, trace = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
     return trace
 
+def rejuvenate(key, data, trace, gibbs_iters, max_clusters):
+    extended_pi = jnp.concatenate((trace.cluster.pi, jnp.zeros(max_clusters)))
+    log_likelihood_mask = jnp.where(extended_pi == 0, -jnp.inf, 0)
+
+    partial_gibbs_step = partial(gibbs_step, 
+        alpha=trace.gem.alpha, g=trace.g, data=data, 
+        log_likelihood_mask=log_likelihood_mask, max_clusters=max_clusters,
+        rejuvenation=True)
+
+    keys = jax.random.split(key, gibbs_iters)
+    _, q_split_trace = jax.lax.scan(partial_gibbs_step, trace.cluster.c, keys)
+
+    cluster = q_split_trace[-1]
+    cluster = Cluster(cluster.c, jnp.sum(trace.cluster.pi) * cluster.pi[:max_clusters], cluster.f)
+
+    return cluster
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters'])
 def step(data, gibbs_iters, key, K, trace, max_clusters):
@@ -34,60 +58,31 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
 
     cluster_weights = get_weights(trace, K, data, q_split_trace, max_clusters)
 
-    logpdf_pi = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
-    logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
-
-    idx = jnp.arange(logpdf_clusters.shape[0])
-    logpdf_clusters = jnp.where(idx < K-1, logpdf_clusters, 0) 
-    stop_weight = logpdf_pi + jnp.sum(logpdf_clusters)
+    stop_weight = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
 
     weights = jnp.zeros(max_clusters + 1)
     weights = weights.at[1:].set(cluster_weights)
     weights = weights.at[0].set(stop_weight)
     k = jax.random.categorical(key, weights)
 
-    return jax.lax.cond(k==0, 
+    new_cluster = jax.lax.cond(k==0, 
         lambda cluster0, cluster1, k, K, max_clusters: trace.cluster, 
         lambda  cluster0, cluster1, k, K, max_clusters: split_cluster(cluster0, cluster1, k, K, max_clusters),
         trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
 
+    jax.debug.breakpoint()
+    return new_cluster
+
 def get_weights(trace, K, data, q_split_trace, max_clusters):
     # for each cluster, get the pi score
-    # I think the idea will be to make a separate pi vector for each 
-    # possible cluster split
     pi_split = jax.vmap(make_pi, in_axes=(None, 0, None, None))(
         trace.cluster.pi, jnp.arange(max_clusters), q_split_trace.pi[-1], max_clusters)
     logpdf_pi = jax.vmap(logpdf, in_axes=(None, 0, None))(trace.gem, pi_split, K)
 
     logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
-    logpdf_except_cluster = jnp.sum(logpdf_clusters) - logpdf_clusters
+    logpdf_split_clusters = score_trace_cluster(data, trace.g, q_split_trace[-1], max_clusters)
 
-    logpdf_q_pi = score_q_pi(q_split_trace.pi[-1], max_clusters, trace.gem.alpha)   
-
-    Z = q_Z(q_split_trace[-1], data, max_clusters)
-
-    # score pi1 and pi2 under each proposal
-    return Z + logpdf_pi + logpdf_except_cluster - logpdf_q_pi
-
-
-def q_Z(q_split_trace, data, max_clusters):
-    c, pi, f = q_split_trace.c, q_split_trace.pi, q_split_trace.f
-    c_mod = jnp.mod(c, max_clusters)
-    x_scores0 = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c_mod)
-    x_scores1 = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c_mod + max_clusters)
-
-    pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
-    c_scores0 = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c_mod.reshape(-1, 1))
-    c_scores1 = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, max_clusters + c_mod.reshape(-1, 1))
-
-    scores0 = x_scores0 + c_scores0
-    scores1 = x_scores1 + c_scores1
-
-    scores = jnp.logaddexp(scores0, scores1)
-    max_score = jnp.max(scores)
-    return jnp.log(jax.ops.segment_sum(
-        jnp.exp(scores - max_score), c_mod, 
-        num_segments=max_clusters)) + max_score
+    return logpdf_pi + logpdf_split_clusters - logpdf_clusters
 
 def score_q_pi(q_pi, max_clusters, alpha):
     q_pi_dist = Dirichlet(alpha=jnp.ones((1, 2)) * alpha/2)
@@ -102,7 +97,8 @@ def score_q_pi(q_pi, max_clusters, alpha):
 def make_pi(pi, k, pi_split, max_clusters):
     pi_k0 = pi[k]
     pi = pi.at[k].set(pi_k0 * pi_split[k])
-    pi = pi.at[k + max_clusters].set(pi_k0 * pi_split[k + max_clusters])
+    idx = jnp.argwhere(pi == 0, size=1)
+    pi = pi.at[idx].set(pi_k0 * pi_split[k + max_clusters])
 
     return jnp.sort(pi, descending=True)
 
@@ -110,6 +106,9 @@ def score_trace_cluster(data, g, cluster, max_clusters):
     c, pi, f = cluster.c, cluster.pi, cluster.f
 
     x_scores = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c)
+
+    c = jnp.mod(c, max_clusters)
+
     pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
     c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c.reshape(-1, 1))
     theta_scores = jax.vmap(logpdf, in_axes=(None, 0))(g, f)[:max_clusters]
@@ -117,6 +116,7 @@ def score_trace_cluster(data, g, cluster, max_clusters):
     xc_scores_cluster = jax.ops.segment_sum(
         x_scores + c_scores, c, 
         num_segments=max_clusters)
+
     return xc_scores_cluster + theta_scores
 
 def split_cluster(cluster, split_clusters, k, K, max_clusters):
@@ -188,10 +188,10 @@ def make_log_likelihood_mask(c, max_clusters):
     clusters_y = jnp.concatenate((c, max_clusters + c), dtype=int)
     return log_likelihood_mask.at[clusters_x, clusters_y].set(0)
 
-def gibbs_step(assignments, key, alpha, g, data, log_likelihood_mask, max_clusters):
+def gibbs_step(assignments, key, alpha, g, data, log_likelihood_mask, max_clusters, rejuvenation=False):
     subkey1, subkey2, subkey3 = jax.random.split(key, 3)
     f = gibbs_f(max_clusters, data, subkey1, g, assignments)
-    pi = gibbs_pi(max_clusters, subkey2, alpha, assignments)
+    pi = gibbs_pi(max_clusters, subkey2, alpha, assignments, rejuvenation=rejuvenation)
 
     assignments = gibbs_c(subkey3, pi, log_likelihood_mask, f, data)
 
@@ -211,9 +211,13 @@ def gibbs_c(key, pi, log_likelihood_mask, f, data):
     assignments = jax.random.categorical(key, log_score, axis=-1).astype(int)
     return assignments
 
-def gibbs_pi(max_clusters, key, alpha, c):
+def gibbs_pi(max_clusters, key, alpha, c, rejuvenation=False):
     cluster_counts = jnp.sum(jax.nn.one_hot(c, num_classes=2 * max_clusters, dtype=jnp.int32), axis=0)
-    pi = jax.random.dirichlet(key, alpha / 2 + cluster_counts)
-    pi_pairs = pi.reshape((2, -1))
-    pi_pairs = pi_pairs / jnp.sum(pi_pairs, axis=0)
-    return pi_pairs.reshape(-1)
+    if rejuvenation:
+        pi = jax.random.dirichlet(key, cluster_counts)
+        return pi
+    else:
+        pi = jax.random.dirichlet(key, alpha / 2 + cluster_counts)
+        pi_pairs = pi.reshape((2, -1))
+        pi_pairs = pi_pairs / jnp.sum(pi_pairs, axis=0)
+        return pi_pairs.reshape(-1)
