@@ -14,7 +14,7 @@ def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
 
     def wrap_step(trace, n):
         key = smc_keys[n]
-        keys = jax.random.split(key)
+        keys = jax.random.split(key, 3)
         new_cluster = step(data=data, trace=trace, gibbs_iters=gibbs_iters, 
             max_clusters=max_clusters, key=keys[0], K=n+2)
         split_trace = Trace(
@@ -26,10 +26,10 @@ def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
         rejuvenated_cluster = rejuvenate(keys[1], data, split_trace, gibbs_iters, max_clusters)
         rejuvenated_trace = Trace(
             gem=split_trace.gem,
-            g=split_trace.g,
+            g=trace.g,
             cluster=rejuvenated_cluster
         )
-        
+
         return rejuvenated_trace, rejuvenated_trace
 
     carry, trace = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
@@ -58,11 +58,10 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
 
     cluster_weights = get_weights(trace, K, data, q_split_trace, max_clusters)
 
-    stop_weight = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
+    logprob_pi0 = logpdf(trace.gem, jnp.sort(trace.cluster.pi, descending=True), K-1)
 
     weights = jnp.zeros(max_clusters + 1)
-    weights = weights.at[1:].set(cluster_weights)
-    weights = weights.at[0].set(stop_weight)
+    weights = weights.at[1:].set(cluster_weights - logprob_pi0)
     k = jax.random.categorical(key, weights)
 
     new_cluster = jax.lax.cond(k==0, 
@@ -70,7 +69,8 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
         lambda  cluster0, cluster1, k, K, max_clusters: split_cluster(cluster0, cluster1, k, K, max_clusters),
         trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
 
-    jax.debug.breakpoint()
+    jax.debug.print("{x}", x=weights[k])
+    
     return new_cluster
 
 def get_weights(trace, K, data, q_split_trace, max_clusters):
@@ -80,7 +80,7 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
     logpdf_pi = jax.vmap(logpdf, in_axes=(None, 0, None))(trace.gem, pi_split, K)
 
     logpdf_clusters = score_trace_cluster(data, trace.g, trace.cluster, max_clusters)
-    logpdf_split_clusters = score_trace_cluster(data, trace.g, q_split_trace[-1], max_clusters)
+    logpdf_split_clusters = score_trace_cluster(data, trace.g, q_split_trace[-1], max_clusters, add_c=True)
 
     return logpdf_pi + logpdf_split_clusters - logpdf_clusters
 
@@ -102,19 +102,24 @@ def make_pi(pi, k, pi_split, max_clusters):
 
     return jnp.sort(pi, descending=True)
 
-def score_trace_cluster(data, g, cluster, max_clusters):
+def score_trace_cluster(data, g, cluster, max_clusters, add_c=False):
     c, pi, f = cluster.c, cluster.pi, cluster.f
 
     x_scores = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c)
+    x_scores_normal = jax.vmap(logpdf, in_axes=(None, 0, 0))(f.normal, data[0], c)
+    x_scores_categorical = jax.vmap(logpdf, in_axes=(None, 0, 0))(f.categorical, data[1], c)
 
     c = jnp.mod(c, max_clusters)
 
     pi_dist = Categorical(logprobs=jnp.log(pi.reshape(1, -1)))
-    c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c.reshape(-1, 1))
     theta_scores = jax.vmap(logpdf, in_axes=(None, 0))(g, f)[:max_clusters]
 
+    if add_c:
+        c_scores = jax.vmap(logpdf, in_axes=(None, 0))(pi_dist, c.reshape(-1, 1))
+        x_scores = x_scores + c_scores
+
     xc_scores_cluster = jax.ops.segment_sum(
-        x_scores + c_scores, c, 
+        x_scores, c, 
         num_segments=max_clusters)
 
     return xc_scores_cluster + theta_scores
