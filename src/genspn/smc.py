@@ -3,13 +3,13 @@ import jax
 import equinox as eqx
 import numpy as np
 from plum import dispatch
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Float, Integer
 from genspn.distributions import (NormalInverseGamma, Dirichlet, MixedConjugate, 
     posterior, sample, logpdf, Normal, Categorical, Mixed, GEM, Cluster, Trace)
 from functools import partial
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters', 'n_steps'])
-def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
+def smc(key, trace, data_test, n_steps, data, gibbs_iters, max_clusters):
     smc_keys = jax.random.split(key, n_steps)
 
     def wrap_step(trace, n):
@@ -30,10 +30,21 @@ def smc(key, trace, n_steps, data, gibbs_iters, max_clusters):
             cluster=rejuvenated_cluster
         )
 
+        logprob = jax.vmap(jax.vmap(logpdf, in_axes=(None, 0)), in_axes=(0, None))(
+            rejuvenated_trace.cluster.f,
+            data_test
+            )
+        logprob = (logprob[:max_clusters] + jnp.log(rejuvenated_trace.cluster.pi)[:, None])
+        logprob = jnp.sum(jax.scipy.special.logsumexp(logprob, axis=0), axis=0)
+
+        jax.debug.print("{x}", x=logprob)
+
         return rejuvenated_trace, rejuvenated_trace
 
     carry, trace = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
     return trace
+
+
 
 def rejuvenate(key, data, trace, gibbs_iters, max_clusters):
     extended_pi = jnp.concatenate((trace.cluster.pi, jnp.zeros(max_clusters)))
@@ -62,6 +73,7 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
 
     weights = jnp.zeros(max_clusters + 1)
     weights = weights.at[1:].set(cluster_weights - logprob_pi0)
+    weights = weights.at[0].set(-jnp.inf)  # temp, don't stop
     k = jax.random.categorical(key, weights)
 
     new_cluster = jax.lax.cond(k==0, 
@@ -69,8 +81,6 @@ def step(data, gibbs_iters, key, K, trace, max_clusters):
         lambda  cluster0, cluster1, k, K, max_clusters: split_cluster(cluster0, cluster1, k, K, max_clusters),
         trace.cluster, q_split_trace[-1], k-1, K, max_clusters)
 
-    jax.debug.print("{x}", x=weights[k])
-    
     return new_cluster
 
 def get_weights(trace, K, data, q_split_trace, max_clusters):
@@ -142,20 +152,20 @@ def split_cluster(cluster, split_clusters, k, K, max_clusters):
     return Cluster(c, pi, f)
 
 @dispatch
-def update_f(f0: Normal, f: Normal, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
+def update_f(f0: Normal, f: Normal, k: Integer[Array, ""], K: Integer[Array, ""], max_clusters: Integer[Array, ""]):
     mu = update_vector(f0.mu, f.mu, k, K, max_clusters)
     std = update_vector(f0.std, f.std, k, K, max_clusters)
 
     return Normal(mu, std)
 
 @dispatch
-def update_f(f0: Categorical, f: Categorical, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
+def update_f(f0: Categorical, f: Categorical, k: Integer[Array, ""], K: Integer[Array, ""], max_clusters: Integer[Array, ""]):
     logprobs = update_vector(f0.logprobs, f.logprobs, k, K, max_clusters)
 
     return Categorical(logprobs)
 
 @dispatch
-def update_f(f0: Mixed, f: Mixed, k: Int[Array, ""], K: Int[Array, ""], max_clusters: Int[Array, ""]):
+def update_f(f0: Mixed, f: Mixed, k: Integer[Array, ""], K: Integer[Array, ""], max_clusters: Integer[Array, ""]):
     return Mixed(
         update_f(f0.normal, f.normal, k, K, max_clusters),
         update_f(f0.categorical, f.categorical, k, K, max_clusters)
