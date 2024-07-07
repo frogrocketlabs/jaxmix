@@ -1,9 +1,11 @@
 import jax.numpy as jnp
 import jax
 import equinox as eqx
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Float, Integer
 from plum import dispatch
 from typing import Optional
+
+ZERO = 1e-20
 
 class NormalInverseGamma(eqx.Module):
     m: Float[Array, "*batch n_dim"]
@@ -60,11 +62,13 @@ class Trace(eqx.Module):
 
 type F = Categorical | Normal | Mixed
 type Datapoint = (Float[Array, "n_c"] | 
-    Int[Array, "n_d"] | tuple[Float[Array, "n_c"], Int[Array, "n_d"]])
+    Integer[Array, "n_d"] | tuple[Float[Array, "n_c"], Integer[Array, "n_d"]])
 
 @dispatch
 def sample(key: Array, dist: Dirichlet) -> Categorical:
     probs = jax.random.dirichlet(key, dist.alpha)
+    probs = jnp.where(probs == 0, ZERO, probs)
+
     return Categorical(jnp.log(probs))
 
 @dispatch 
@@ -89,37 +93,38 @@ def sample(key: Array, dist: MixedConjugate) -> Mixed:
     return Mixed(normal=normal, categorical=categorical)
 
 @dispatch
-def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Int[Array, "batch n_categorical_dim"]]) -> MixedConjugate:
+def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Integer[Array, "batch n_categorical_dim"]]) -> MixedConjugate:
     nig = posterior(dist.nig, x[0])
     dirichlet = posterior(dist.dirichlet, x[1])
 
     return MixedConjugate(nig=nig, dirichlet=dirichlet)
 
 @dispatch
-def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Int[Array, "batch n_categorical_dim"]], c: Int[Array, "batch"], max_clusters:Optional[int]=None) -> MixedConjugate:
+def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Integer[Array, "batch n_categorical_dim"]], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> MixedConjugate:
     nig = posterior(dist.nig, x[0], c, max_clusters)
     dirichlet = posterior(dist.dirichlet, x[1], c, max_clusters)
 
     return MixedConjugate(nig=nig, dirichlet=dirichlet)
 
 @dispatch
-def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"], c: Int[Array, "batch"], max_clusters:Optional[int]=None) -> NormalInverseGamma:
+def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> NormalInverseGamma:
     N = jax.ops.segment_sum(jnp.ones(x.shape[0], dtype=jnp.int32), c, num_segments=max_clusters)
-    sum_x = jax.ops.segment_sum(x, c, num_segments=max_clusters)
-    sum_x_sq = jax.ops.segment_sum(x ** 2, c, num_segments=max_clusters)
+    masked_x = jnp.nan_to_num(x, 0.)
+    sum_x = jax.ops.segment_sum(masked_x, c, num_segments=max_clusters)
+    sum_x_sq = jax.ops.segment_sum(masked_x ** 2, c, num_segments=max_clusters)
 
     return jax.vmap(posterior, in_axes=(None, 0, 0, 0))(dist, N, sum_x, sum_x_sq)
 
 @dispatch
 def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"]) -> NormalInverseGamma:
     N = x.shape[0]
-    sum_x = jnp.sum(x, axis=0)
-    sum_x_sq = jnp.sum(x ** 2, axis=0)
+    sum_x = jnp.nansum(x, axis=0)
+    sum_x_sq = jnp.nansum(x ** 2, axis=0)
 
     return posterior(dist, N, sum_x, sum_x_sq)
 
 @dispatch
-def posterior(dist: NormalInverseGamma, N: Int[Array, ""], sum_x: Float[Array, "n_dim"], sum_x_sq: Float[Array, "n_dim"]) -> NormalInverseGamma:
+def posterior(dist: NormalInverseGamma, N: Integer[Array, ""], sum_x: Float[Array, "n_dim"], sum_x_sq: Float[Array, "n_dim"]) -> NormalInverseGamma:
     l = dist.l + N
     m = (dist.l * dist.m + sum_x) / l
     a = dist.a + N / 2
@@ -128,31 +133,31 @@ def posterior(dist: NormalInverseGamma, N: Int[Array, ""], sum_x: Float[Array, "
     return NormalInverseGamma(m=m, l=l, a=a, b=b)
 
 @dispatch
-def posterior(dist: Dirichlet, x: Int[Array, "batch n_dim"], c: Int[Array, "batch"], max_clusters:Optional[int]=None) -> Dirichlet:
+def posterior(dist: Dirichlet, x: Integer[Array, "batch n_dim"], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> Dirichlet:
     one_hot_x = jax.nn.one_hot(x, num_classes=dist.alpha.shape[-1], dtype=jnp.int32)
     counts = jax.ops.segment_sum(one_hot_x, c, num_segments=max_clusters)
     return jax.vmap(posterior, in_axes=(None, 0))(dist, counts)
 
 @dispatch
-def posterior(dist: Dirichlet, counts: Int[Array, "n_dim k"]) -> Dirichlet:
+def posterior(dist: Dirichlet, counts: Integer[Array, "n_dim k"]) -> Dirichlet:
     return Dirichlet(alpha=dist.alpha + counts)
 
 @dispatch
 def logpdf(dist: Normal, x: Float[Array, "n_dim"]) -> Float[Array, ""]:
-    logprob = jnp.sum(-0.5 * jnp.log(2 * jnp.pi) - jnp.log(dist.std) - 0.5 * ((x - dist.mu) / dist.std) ** 2)
+    logprob = jnp.nansum(-0.5 * jnp.log(2 * jnp.pi) - jnp.log(dist.std) - 0.5 * ((x - dist.mu) / dist.std) ** 2)
 
     return logprob
 
 @dispatch
-def logpdf(dist: Categorical, x: Int[Array, "n_dim"]) -> Float[Array, ""]:
-    return jnp.sum(dist.logprobs[jnp.arange(x.shape[-1]), x])
+def logpdf(dist: Categorical, x: Integer[Array, "n_dim"]) -> Float[Array, ""]:
+    return jnp.nansum(dist.logprobs.at[jnp.arange(x.shape[-1]), x].get(mode="fill", fill_value=jnp.nan))
 
 @dispatch
-def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Int[Array, "n_categorical_dim"]]) -> Float[Array, ""]:
+def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Integer[Array, "n_categorical_dim"]]) -> Float[Array, ""]:
     return logpdf(dist.normal, x[0]) + logpdf(dist.categorical, x[1])
 
 @dispatch
-def logpdf(dist: GEM, pi: Float[Array, "n"], K: Int[Array, ""]) -> Float[Array, ""]:
+def logpdf(dist: GEM, pi: Float[Array, "n"], K: Integer[Array, ""]) -> Float[Array, ""]:
     betas = jax.vmap(lambda i: 1 - pi[i] / pi[i-1])(jnp.arange(len(pi)))
     betas = betas.at[0].set(pi[0])
     logprobs = jax.vmap(jax.scipy.stats.beta.logpdf, in_axes=(0, None, 0))(betas, 1-dist.d, dist.alpha + (1 + jnp.arange(len(pi))) * dist.d)
@@ -161,7 +166,7 @@ def logpdf(dist: GEM, pi: Float[Array, "n"], K: Int[Array, ""]) -> Float[Array, 
     return jnp.sum(logprobs)
 
 @dispatch
-def logpdf(dist: F, x: Datapoint, c: Int[Array, ""]) -> Float[Array, ""]:
+def logpdf(dist: F, x: Datapoint, c: Integer[Array, ""]) -> Float[Array, ""]:
     dist = dist[c]
     return logpdf(dist, x)
 
@@ -177,4 +182,5 @@ def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
 
 @dispatch
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
-    return jnp.sum(jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha))
+    logprobs = jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha)
+    return jnp.sum(logprobs)
