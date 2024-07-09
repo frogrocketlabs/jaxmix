@@ -61,8 +61,30 @@ class Trace(eqx.Module):
     cluster: Cluster
 
 type F = Categorical | Normal | Mixed
-type Datapoint = (Float[Array, "n_c"] | 
-    Integer[Array, "n_d"] | tuple[Float[Array, "n_c"], Integer[Array, "n_d"]])
+
+type Datapoint = Float[Array, "n_c"] | Integer[Array, "n_d"] | tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]
+
+class MixtureModel(eqx.Module):
+    # mask: Datapoint
+    pi: Float[Array, "*batch k"]
+    f: F
+
+@dispatch
+def marginalize(dist: Normal | Categorical, idxs: tuple[int, ...]) -> Normal | Categorical:
+    return dist[idxs]
+
+@dispatch
+def marginalize(dist: Mixed, idxs: tuple[tuple[int, ...]]) -> Mixed:
+    return Mixed(normal=dist.normal[idxs[0]], categorical=dist.categorical[idxs[1]])
+
+# @dispatch
+# def condition(dist: MixtureModel, x: tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]) -> MixtureModel:
+#     logprob = logpdf(dist, x)
+#     # TODO check that we're not adding a condition that's incompatible with a previous one
+
+
+#     return Normal(mu=x, std=dist.std)
+
 
 @dispatch
 def sample(key: Array, dist: Dirichlet) -> Categorical:
@@ -91,6 +113,28 @@ def sample(key: Array, dist: MixedConjugate) -> Mixed:
     categorical = sample(keys[1], dist.dirichlet)
 
     return Mixed(normal=normal, categorical=categorical)
+
+@dispatch
+def sample(key: Array, dist: Normal) -> Float[Array, "n_c"]:
+    return dist.mu + dist.std * jax.random.normal(key, shape=dist.mu.shape)
+
+@dispatch
+def sample(key: Array, dist: Categorical) -> Integer[Array, "n_D"]:
+    return jax.random.categorical(key, dist.logprobs)
+
+@dispatch
+def sample(key: Array, dist: Mixed) -> tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]:
+    keys = jax.random.split(key)
+    normal = sample(keys[0], dist.normal)
+    categorical = sample(keys[1], dist.categorical)
+
+    return normal, categorical
+
+@dispatch 
+def sample(key: Array, dist: MixtureModel):
+    keys = jax.random.split(key)
+    cluster = jax.random.categorical(keys[0], dist.pi)
+    return sample(key, dist.f[cluster])
 
 @dispatch
 def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Integer[Array, "batch n_categorical_dim"]]) -> MixedConjugate:
@@ -169,6 +213,12 @@ def logpdf(dist: GEM, pi: Float[Array, "n"], K: Integer[Array, ""]) -> Float[Arr
 def logpdf(dist: F, x: Datapoint, c: Integer[Array, ""]) -> Float[Array, ""]:
     dist = dist[c]
     return logpdf(dist, x)
+
+@dispatch
+def logpdf(dist: MixtureModel, x: Datapoint) -> Float[Array, ""]:
+    logprob = jax.vmap(logpdf, in_axes=(0, None))(dist.f, x)
+    logprob = logprob + jnp.log(dist.pi)
+    return jax.scipy.special.logsumexp(logprob)
 
 @dispatch
 def logpdf(dist: MixedConjugate, x: Mixed)-> Float[Array, ""]:
