@@ -1,11 +1,10 @@
 import jax.numpy as jnp
 import jax
-import equinox as eqx
 import numpy as np
 from plum import dispatch
-from jaxtyping import Array, Float, Integer
-from genspn.distributions import (NormalInverseGamma, Dirichlet, MixedConjugate, 
-    posterior, sample, logpdf, Normal, Categorical, Mixed, GEM, Cluster, Trace)
+from jaxtyping import Array, Integer
+from genspn.distributions import (Dirichlet, MixtureModel,
+    posterior, sample, logpdf, Normal, Categorical, Mixed, Cluster, Trace)
 from functools import partial
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters', 'n_steps'])
@@ -30,14 +29,12 @@ def smc(key, trace, data_test, n_steps, data, gibbs_iters, max_clusters):
             cluster=rejuvenated_cluster
         )
 
-        logprob = jax.vmap(jax.vmap(logpdf, in_axes=(None, 0)), in_axes=(0, None))(
-            rejuvenated_trace.cluster.f,
-            data_test
-            )
-        logprob = (logprob[:max_clusters] + jnp.log(rejuvenated_trace.cluster.pi)[:, None])
-        logprob = jnp.sum(jax.scipy.special.logsumexp(logprob, axis=0), axis=0)
+        mixture_model = MixtureModel(
+            pi=rejuvenated_trace.cluster.pi/jnp.sum(rejuvenated_trace.cluster.pi), 
+            f=rejuvenated_trace.cluster.f[:max_clusters])
+        logprobs = jax.vmap(logpdf, in_axes=(None, 0))(mixture_model, data_test)
 
-        jax.debug.print("{x}", x=logprob)
+        jax.debug.print("{x}", x=jnp.sum(logprobs))
 
         return rejuvenated_trace, rejuvenated_trace
 
