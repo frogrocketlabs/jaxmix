@@ -71,20 +71,27 @@ nig = NormalInverseGamma(
     a=jnp.ones(n_continuous), b=jnp.ones(n_continuous))
 
 cat_alpha = jnp.ones((n_discrete, max_n_categories))
+# <= n_categories[:, None] creates a new axis for n_categories.
+# for each of the n_discrete categorical columm, you create
+# a boolean vector/max of length max_n_categories - which
+# which is true when the category exist for a column.
 mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) <= n_categories[:, None]
+#one/zero version of mask
 cat_alpha = jnp.where(mask, cat_alpha, ZERO)
 
 dirichlet = Dirichlet(alpha=cat_alpha)
 g = MixedConjugate(nig=nig, dirichlet=dirichlet)
-
 c = jnp.zeros(len(data[0]), dtype=int)
 
 # %%
+# Posterior hyperparameters
 g_prime = posterior(g, data, c, 2 * max_clusters)
 
 # %%
+# Sample uncollapsed parameters
 f = sample(key, g_prime)
 pi = jnp.zeros(max_clusters)
+# Next line is related to limiting stick breaking
 pi = pi.at[0].set(.9)
 cluster = Cluster(c=c, f=f, pi=pi)
 gem = GEM(alpha=alpha, d=d)
