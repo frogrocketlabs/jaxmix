@@ -18,6 +18,8 @@ dependencies = [
     "altair>=5.3.0",
     "polars>=0.20.31",
     "pyarrow>=16.1.0",
+    "ipykernel>=6.29.5",
+    "huggingface-hub>=0.24.6",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
