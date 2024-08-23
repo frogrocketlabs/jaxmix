@@ -144,6 +144,7 @@ def split_cluster(cluster, split_clusters, k, K, max_clusters):
     c = jnp.where(c == k + max_clusters, K-1, c)
 
     # update f
+    import ipdb; ipdb.set_trace()
     f = update_f(cluster.f, split_clusters.f, k, K-1, max_clusters)
 
     return Cluster(c, pi, f)

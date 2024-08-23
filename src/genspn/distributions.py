@@ -77,15 +77,6 @@ def marginalize(dist: Normal | Categorical, idxs: tuple[int, ...]) -> Normal | C
 def marginalize(dist: Mixed, idxs: tuple[tuple[int, ...]]) -> Mixed:
     return Mixed(normal=dist.normal[idxs[0]], categorical=dist.categorical[idxs[1]])
 
-# @dispatch
-# def condition(dist: MixtureModel, x: tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]) -> MixtureModel:
-#     logprob = logpdf(dist, x)
-#     # TODO check that we're not adding a condition that's incompatible with a previous one
-
-
-#     return Normal(mu=x, std=dist.std)
-
-
 @dispatch
 def sample(key: Array, dist: Dirichlet) -> Categorical:
     probs = jax.random.dirichlet(key, dist.alpha)
@@ -210,9 +201,8 @@ def logpdf(dist: GEM, pi: Float[Array, "n"], K: Integer[Array, ""]) -> Float[Arr
     return jnp.sum(logprobs)
 
 @dispatch
-def logpdf(dist: F, x: Datapoint, c: Integer[Array, ""]) -> Float[Array, ""]:
-    dist = dist[c]
-    return logpdf(dist, x)
+def logpdf(dist: Categorical | Normal | Mixed, x: Integer[Array, ""]) -> Float[Array, ""]:
+    return dist.logprobs.at[jnp.arange(x.shape[-1]), x].get(mode="fill", fill_value=jnp.nan)
 
 @dispatch
 def logpdf(dist: MixtureModel, x: Datapoint) -> Float[Array, ""]:
@@ -234,3 +224,32 @@ def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
 def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
     logprobs = jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha)
     return jnp.sum(logprobs)
+
+def make_trace(key, alpha, d, data, max_clusters):
+    n, n_continuous = data[0].shape
+    n_discrete = data[1].shape[1]
+    n_categories = jnp.nanmax(data[1], axis=0) + 1
+    max_n_categories = jnp.max(n_categories).astype(int)
+
+    nig = NormalInverseGamma(
+    m=jnp.zeros(n_continuous), l=jnp.ones(n_continuous), 
+    a=jnp.ones(n_continuous), b=jnp.ones(n_continuous))
+
+    cat_alpha = jnp.ones((n_discrete, max_n_categories))
+    mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) <= n_categories[:, None]
+    cat_alpha = jnp.where(mask, cat_alpha, ZERO)
+
+    dirichlet = Dirichlet(alpha=cat_alpha)
+    g = MixedConjugate(nig=nig, dirichlet=dirichlet)
+
+    c = jnp.zeros(n, dtype=int)
+
+    g_prime = posterior(g, data, c, 2 * max_clusters)
+
+    f = sample(key, g_prime)
+    pi = jnp.zeros(max_clusters)
+    pi = pi.at[0].set(.9)
+    cluster = Cluster(c=c, f=f, pi=pi)
+    gem = GEM(alpha=alpha, d=d)
+
+    return Trace(gem=gem, g=g, cluster=cluster)
