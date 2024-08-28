@@ -2,7 +2,6 @@ import polars as pl
 import polars.selectors as cs
 import numpy as np
 import jax.numpy as jnp
-from huggingface_hub import login
 from jaxtyping import Array, Float, Integer, Num
 from plum import dispatch
 import os
@@ -33,10 +32,6 @@ def categorical_df_to_integer(df: pl.DataFrame):
 
 
 def load_huggingface(dataset_name):
-    # Check if the Hugging Face token is set in the environment variables
-    os.environ["HF_KEY"] = "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"
-    login(token=os.environ.get("HF_KEY"))
-    
     splits = {
         "train": f"data/{dataset_name}/data-train.parquet",
         "test": f"data/{dataset_name}/data-test.parquet"
