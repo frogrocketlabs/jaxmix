@@ -33,13 +33,14 @@ def smc(key, trace, data_test, n_steps, data, gibbs_iters, max_clusters):
             pi=rejuvenated_trace.cluster.pi/jnp.sum(rejuvenated_trace.cluster.pi), 
             f=rejuvenated_trace.cluster.f[:max_clusters])
         logprobs = jax.vmap(logpdf, in_axes=(None, 0))(mixture_model, data_test)
+        sum_logprobs = jnp.sum(logprobs)
 
-        jax.debug.print("{x}", x=jnp.sum(logprobs))
+        jax.debug.print("{x}", x=sum_logprobs)
 
-        return rejuvenated_trace, rejuvenated_trace
+        return rejuvenated_trace, (rejuvenated_trace, sum_logprobs)
 
-    carry, trace = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
-    return trace
+    carry, (trace, sum_logprobs) = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
+    return trace, sum_logprobs
 
 
 
