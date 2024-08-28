@@ -35,8 +35,6 @@ def smc(key, trace, data_test, n_steps, data, gibbs_iters, max_clusters):
         logprobs = jax.vmap(logpdf, in_axes=(None, 0))(mixture_model, data_test)
         sum_logprobs = jnp.sum(logprobs)
 
-        jax.debug.print("{x}", x=sum_logprobs)
-
         return rejuvenated_trace, (rejuvenated_trace, sum_logprobs)
 
     carry, (trace, sum_logprobs) = jax.lax.scan(wrap_step, trace, jnp.arange(n_steps))
