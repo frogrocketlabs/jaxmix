@@ -5,7 +5,7 @@
 # %%
 from genspn.io import load_huggingface, split_data
 
-train_data, valid_data = load_huggingface("AutoML/heart-disease")
+train_data, valid_data = load_huggingface("AutoML/car")
 
 # %%
 train_data, test_data = split_data(train_data)

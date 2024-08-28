@@ -4,6 +4,7 @@ import equinox as eqx
 from jaxtyping import Array, Float, Integer
 from plum import dispatch
 from typing import Optional
+from numbers import Real
 
 ZERO = 1e-20
 
@@ -225,23 +226,14 @@ def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
     logprobs = jax.vmap(jax.scipy.stats.dirichlet.logpdf)(jnp.exp(x.logprobs), dist.alpha)
     return jnp.sum(logprobs)
 
-def make_trace(key, alpha, d, data, max_clusters):
-    n, n_continuous = data[0].shape
-    n_discrete = data[1].shape[1]
-    n_categories = jnp.nanmax(data[1], axis=0) + 1
-    max_n_categories = jnp.max(n_categories).astype(int)
+def make_trace(
+        key: jax.Array, alpha: Real, d: Real, 
+        data: tuple[Float[Array, "n n_c"], Integer[Array, "n n_d"]] | Float[Array, "n n_c"] | Integer[Array, "n n_d"], 
+        max_clusters: int):
 
-    nig = NormalInverseGamma(
-    m=jnp.zeros(n_continuous), l=jnp.ones(n_continuous), 
-    a=jnp.ones(n_continuous), b=jnp.ones(n_continuous))
+    g = make_g(data)
 
-    cat_alpha = jnp.ones((n_discrete, max_n_categories))
-    mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) <= n_categories[:, None]
-    cat_alpha = jnp.where(mask, cat_alpha, ZERO)
-
-    dirichlet = Dirichlet(alpha=cat_alpha)
-    g = MixedConjugate(nig=nig, dirichlet=dirichlet)
-
+    n = len(data[0]) if isinstance(data, tuple) else len(data)
     c = jnp.zeros(n, dtype=int)
 
     g_prime = posterior(g, data, c, 2 * max_clusters)
@@ -253,3 +245,31 @@ def make_trace(key, alpha, d, data, max_clusters):
     gem = GEM(alpha=alpha, d=d)
 
     return Trace(gem=gem, g=g, cluster=cluster)
+
+@dispatch
+def make_g(data: tuple[Float[Array, "n n_c"], Integer[Array, "n n_d"]]):
+    nig = make_g(data[0])
+    dirichlet = make_g(data[1])
+
+    return MixedConjugate(nig=nig, dirichlet=dirichlet)
+
+
+@dispatch
+def make_g(data: Float[Array, "n n_c"]):
+    n_continuous = data.shape[1]
+
+    return NormalInverseGamma(
+        m=jnp.zeros(n_continuous), l=jnp.ones(n_continuous), 
+        a=jnp.ones(n_continuous), b=jnp.ones(n_continuous))
+
+@dispatch
+def make_g(data: Integer[Array, "n n_d"]):
+    n_discrete = data.shape[1]
+    n_categories = jnp.nanmax(data, axis=0) + 1
+    max_n_categories = jnp.max(n_categories).astype(int)
+
+    cat_alpha = jnp.ones((n_discrete, max_n_categories))
+    mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) <= n_categories[:, None]
+    cat_alpha = jnp.where(mask, cat_alpha, ZERO)
+
+    return Dirichlet(alpha=cat_alpha)

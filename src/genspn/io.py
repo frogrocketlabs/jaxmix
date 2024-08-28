@@ -3,6 +3,8 @@ import polars.selectors as cs
 import numpy as np
 import jax.numpy as jnp
 from huggingface_hub import login
+from jaxtyping import Array, Float, Integer, Num
+from plum import dispatch
 import os
 
 
@@ -10,8 +12,9 @@ def dataframe_to_arrays(df: pl.DataFrame):
     categorical_df = df.select(~cs.numeric())
     numerical_df = df.select(cs.numeric())
 
-    numerical_array  = jnp.array(numerical_df.to_numpy())
-    categorical_array = categorical_df_to_integer(categorical_df)
+    numerical_array  = None if numerical_df.is_empty() else jnp.array(numerical_df.to_numpy())
+    categorical_array = None if categorical_df.is_empty() else categorical_df_to_integer(categorical_df)
+
     return numerical_array, categorical_array
 
 
@@ -38,7 +41,6 @@ def load_huggingface(dataset_name):
         "train": f"data/{dataset_name}/data-train.parquet",
         "test": f"data/{dataset_name}/data-test.parquet"
     }
-    # XXX: change it to load both later; use same string -> int mapping for both.
     train_df = pl.read_parquet(f"hf://datasets/Large-Population-Model/model-building-evaluation/{splits['train']}")
     test_df = pl.read_parquet(f"hf://datasets/Large-Population-Model/model-building-evaluation/{splits['test']}")
 
@@ -47,9 +49,15 @@ def load_huggingface(dataset_name):
 
     n_train = len(train_df)
 
-    return (numerical_array[:n_train], categorical_array[:n_train]), (numerical_array[n_train:], categorical_array[n_train:])
+    if numerical_array is None:
+        return categorical_array[:n_train], categorical_array[n_train:]
+    elif categorical_array is None:
+        return numerical_array[:n_train], numerical_array[n_train:]
+    else:
+        return (numerical_array[:n_train], categorical_array[:n_train]), (numerical_array[n_train:], categorical_array[n_train:])
 
-def split_data(data, test_ratio=0.2):
+@dispatch
+def split_data(data: tuple[Float[Array, "n n_c"], Integer[Array, "n n_d"]], test_ratio: float = 0.2):
     # Unpack the train_data tuple
     data_numerical, data_categorical = data
 
@@ -70,7 +78,19 @@ def split_data(data, test_ratio=0.2):
     train_data = (train_numerical, train_categorical)
     test_data = (test_numerical, test_categorical)
 
-    print(f"Train set size: {train_numerical.shape[0]} samples")
-    print(f"Test set size: {test_numerical.shape[0]} samples")
+    return train_data, test_data
+
+
+@dispatch
+def split_data(data: Float[Array, "n n_c"] | Integer[Array, "n n_d"], test_ratio: float = 0.2):
+    # Calculate the number of samples for the train set (80% of the data)
+    n_samples = data.shape[0]
+    n_train = int((1 - test_ratio) * n_samples)
+
+    # Create a random permutation of indices
+    indices = np.random.permutation(n_samples)
+
+    # Split the numerical data
+    train_data, test_data = data[indices[:n_train]], data[indices[n_train:]]
 
     return train_data, test_data
