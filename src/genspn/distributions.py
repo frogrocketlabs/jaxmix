@@ -202,8 +202,9 @@ def logpdf(dist: GEM, pi: Float[Array, "n"], K: Integer[Array, ""]) -> Float[Arr
     return jnp.sum(logprobs)
 
 @dispatch
-def logpdf(dist: Categorical | Normal | Mixed, x: Integer[Array, ""]) -> Float[Array, ""]:
-    return dist.logprobs.at[jnp.arange(x.shape[-1]), x].get(mode="fill", fill_value=jnp.nan)
+def logpdf(dist: F, x: Datapoint, c: Integer[Array, ""]) -> Float[Array, ""]:
+    dist = dist[c]
+    return logpdf(dist, x)
 
 @dispatch
 def logpdf(dist: MixtureModel, x: Datapoint) -> Float[Array, ""]:

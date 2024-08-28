@@ -113,8 +113,6 @@ def score_trace_cluster(data, g, cluster, max_clusters, add_c=False):
     c, pi, f = cluster.c, cluster.pi, cluster.f
 
     x_scores = jax.vmap(logpdf, in_axes=(None, 0, 0))(f, data, c)
-    x_scores_normal = jax.vmap(logpdf, in_axes=(None, 0, 0))(f.normal, data[0], c)
-    x_scores_categorical = jax.vmap(logpdf, in_axes=(None, 0, 0))(f.categorical, data[1], c)
 
     c = jnp.mod(c, max_clusters)
 
@@ -144,7 +142,6 @@ def split_cluster(cluster, split_clusters, k, K, max_clusters):
     c = jnp.where(c == k + max_clusters, K-1, c)
 
     # update f
-    import ipdb; ipdb.set_trace()
     f = update_f(cluster.f, split_clusters.f, k, K-1, max_clusters)
 
     return Cluster(c, pi, f)
