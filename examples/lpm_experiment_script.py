@@ -76,7 +76,7 @@ def run_experiment_wrapper(seed, dataset_name, n_replicates, max_clusters, gibbs
         "logprob": np.array(logprobs.flatten())
     })
 
-    path = Path("results_no_rejuvenation", dataset_name, "held-out-likelihood.parquet")
+    path = Path("../results_no_rejuvenation", dataset_name, "held-out-likelihood.parquet")
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
 
@@ -88,9 +88,6 @@ config = dataset.card_data['configs']
 
 
 dataset_names = [c['data_files'][0]['path'].rpartition('/')[0] for c in config]
-# dataset_names = [c for c in dataset_names if ("CTGAN" in c) and ("covertype" not in c)]
-# dataset_names = [c for c in dataset_names if ("CTGAN" in c) or ("lpm" in c)]
-dataset_names = [c for c in dataset_names if "CES" in c]
 n_replicates = 1
 seed = 1234
 max_clusters = 300
