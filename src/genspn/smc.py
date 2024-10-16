@@ -9,6 +9,10 @@ from functools import partial
 
 @partial(jax.jit, static_argnames=['gibbs_iters', 'max_clusters', 'n_steps'])
 def smc(key, trace, data_test, n_steps, data, gibbs_iters, max_clusters):
+
+    if not isinstance(data, tuple):
+        data = (data,)
+        data_test = (data_test,)
     smc_keys = jax.random.split(key, n_steps)
 
     def wrap_step(trace, n):
@@ -90,16 +94,6 @@ def get_weights(trace, K, data, q_split_trace, max_clusters):
 
     return logpdf_pi + logpdf_split_clusters - logpdf_clusters
 
-def score_q_pi(q_pi, max_clusters, alpha):
-    q_pi_dist = Dirichlet(alpha=jnp.ones((1, 2)) * alpha/2)
-    q_pi_stack = Categorical(
-        jnp.vstack((
-        jnp.log(q_pi[:max_clusters]),
-        jnp.log(q_pi[max_clusters:]),
-     ))[None, :])
-
-    return jax.vmap(logpdf, in_axes=(None, -1))(q_pi_dist, q_pi_stack)
-
 def make_pi(pi, k, pi_split, max_clusters):
     pi_k0 = pi[k]
     pi = pi.at[k].set(pi_k0 * pi_split[k])
@@ -159,10 +153,11 @@ def update_f(f0: Categorical, f: Categorical, k: Integer[Array, ""], K: Integer[
     return Categorical(logprobs)
 
 @dispatch
-def update_f(f0: Mixed, f: Mixed, k: Integer[Array, ""], K: Integer[Array, ""], max_clusters: Integer[Array, ""]):
+# plum is struggling with this signature for some reason, momentarily using a catch all
+# def update_f(f0: Mixed, f: Mixed, k: Integer[Array, ""], K: Integer[Array, ""], max_clusters: Integer[Array, ""]):
+def update_f(f0: Mixed, f, k, K, max_clusters):
     return Mixed(
-        update_f(f0.normal, f.normal, k, K, max_clusters),
-        update_f(f0.categorical, f.categorical, k, K, max_clusters)
+        dists=tuple([update_f(f0.dists[i], f.dists[i], k, K, max_clusters) for i in range(len(f0.dists))])
     )
 
 def update_vector(v0, split_v, k, K, max_clusters):

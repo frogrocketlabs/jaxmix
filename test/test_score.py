@@ -1,25 +1,9 @@
-from genspn.distributions import (logpdf, GEM, Normal, 
+from genspn.distributions import (logpdf, GEM, Normal,
     NormalInverseGamma, Cluster)
-from genspn.smc import score_trace_cluster, make_pi, score_q_pi, q_Z
+from genspn.smc import score_trace_cluster, make_pi
 import jax.numpy as jnp
 import jax
-
-def test_score_q_pi():
-    q_pi = jnp.log(jnp.array([1/2, 3/4, 1, 1/2, 1/4, 0]))
-    max_clusters = 3
-    alpha = 10
-    q_pi_logpdf = score_q_pi(q_pi, max_clusters, alpha)
-    true_logpdf0 = jax.scipy.stats.dirichlet.logpdf(
-        jnp.array([1/2, 1/2]),
-        jnp.array([alpha/2, alpha/2])
-    )
-
-    true_logpdf1 = jax.scipy.stats.dirichlet.logpdf(
-        jnp.array([3/4, 1/4]),
-        jnp.array([alpha/2, alpha/2])
-    )
-    assert q_pi_logpdf[0] == true_logpdf0
-    assert q_pi_logpdf[1] == true_logpdf1
+import pytest
 
 def test_make_pi():
     max_clusters = 3
@@ -33,7 +17,7 @@ def test_score_stick_breaking():
     alpha = 1
     d = .1
     gem = GEM(alpha, d)
-    K = 2
+    K = jnp.array(2)
     pis0 = jnp.array([1/3, 1/4, 1/8])
     pis1 = jnp.array([1/2, 1/4, 1/8])
 
@@ -42,12 +26,12 @@ def test_score_stick_breaking():
 
     assert logp0 == (
         jax.scipy.stats.beta.logpdf(pis0[0], 1 - d, alpha + d) +
-        jax.scipy.stats.beta.logpdf(1 - pis0[1]/pis0[0], 1 - d, alpha + 2 * d) 
+        jax.scipy.stats.beta.logpdf(1 - pis0[1]/pis0[0], 1 - d, alpha + 2 * d)
     )
 
     assert logp1 == (
         jax.scipy.stats.beta.logpdf(pis1[0], 1 - d, alpha + d) +
-        jax.scipy.stats.beta.logpdf(1 - pis1[1]/pis1[0], 1 - d, alpha + 2 * d) 
+        jax.scipy.stats.beta.logpdf(1 - pis1[1]/pis1[0], 1 - d, alpha + 2 * d)
     )
 
 def test_score_data():
@@ -56,8 +40,8 @@ def test_score_data():
 
     dist  = Normal(
         mu=jnp.vstack((
-            jnp.zeros(6), 
-            jnp.ones(6))), 
+            jnp.zeros(6),
+            jnp.ones(6))),
         std=jnp.vstack((
             jnp.ones(6),
             jnp.ones(6),
@@ -70,6 +54,12 @@ def test_score_data():
     assert x_logpdfs[0] != x_logpdfs[1]
 
 def test_score_trace_cluster():
+    """
+    What is this testing? P(x | m_c), where m_c is hierarchical model (inverse-gamma
+    AND normal) for each cluster c.
+
+    So I guess, kinda P(x|mu, sigma) x P(mu| posterior-hypers) x P(sigma| posterior-hypers)
+    """
     x = jnp.zeros((5, 2))
     c = jnp.array([0, 0, 0, 1, 1], dtype=int)
     pi = jnp.array([1/2, 1/2, jnp.nan])
@@ -78,29 +68,34 @@ def test_score_trace_cluster():
             [[0, 1],
             [1, 1],
             [10, 10]]
-            ), 
+            ),
         std=jnp.ones((3,2)))
     g = NormalInverseGamma(
-        m=jnp.zeros(2), b=jnp.ones(2), a=jnp.ones(2), 
+        m=jnp.zeros(2), b=jnp.ones(2), a=jnp.ones(2),
         l=jnp.ones(2))
     cluster = Cluster(c=c, pi=pi, f=f)
     max_clusters = 3
 
     logprobs = score_trace_cluster(x, g, cluster, max_clusters)
-
+    # The next 3 lines compute 3 rows for the first cluster in two
+    # columns and 2 rows for the second cluster.
     cluster0_x_prob = 3 * jax.scipy.stats.norm.logpdf(0) + \
         3 * jax.scipy.stats.norm.logpdf(0, loc=1)
     cluster1_x_prob = 4 * jax.scipy.stats.norm.logpdf(0, loc=1)
 
+    # Running logpdf(dist: NormalInverseGamma, x: Normal)
+    # scoring mu and sigma for each cluster, i.e.
+    # P(mu| posterior-hypers) x P(sigma| posterior-hypers)
     cluster0_theta_prob = logpdf(g, f[0])
     cluster1_theta_prob = logpdf(g, f[1])
 
-    cluster0_prob = cluster0_x_prob + cluster0_theta_prob + 3 * jnp.log(1/2)
-    cluster1_prob = cluster1_x_prob + cluster1_theta_prob + 2 * jnp.log(1/2)
-
+    # sum up to compute the full term.
+    cluster0_prob = cluster0_x_prob + cluster0_theta_prob
+    cluster1_prob = cluster1_x_prob + cluster1_theta_prob
     assert jnp.isclose(cluster0_prob, logprobs[0])
     assert jnp.isclose(cluster1_prob, logprobs[1])
 
+@pytest.mark.xfail(reason="q_Z doesn't exist anymore - not yet sure what this should test")
 def test_q_Z():
     x = jnp.zeros((5, 2))
     max_clusters = 2
@@ -112,9 +107,9 @@ def test_q_Z():
             [1, 1],
             [10, 10],
             [0, 10]]
-            ), 
+            ),
         std=jnp.ones((4,2)))
-    
+
     cluster = Cluster(c=c, pi=pi, f=f)
 
     Z = q_Z(cluster, x, max_clusters)

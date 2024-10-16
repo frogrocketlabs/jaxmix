@@ -66,7 +66,7 @@ def test_mixture_model():
     c = jnp.zeros(200)
     nig = NormalInverseGamma(m=jnp.zeros(2), l=jnp.ones(2), a=jnp.ones(2), b=jnp.ones(2))
     dirichlet = Dirichlet(alpha=jnp.ones((1, 2)))
-    g = MixedConjugate(nig=nig, dirichlet=dirichlet)
+    g = MixedConjugate(dists=(nig, dirichlet,))
 
     # step_jit = jax.jit(partial(step, gibbs_iters=iters))
     trace = q_split(data, gibbs_iters=iters, max_clusters=2, key=keys[5], c0=c, g=g, alpha=alpha)

@@ -33,16 +33,19 @@ class Categorical(eqx.Module):
     def __getitem__(self, key):
         return Categorical(logprobs=self.logprobs[key])
 
+type BaseF = Categorical | Normal
+type BaseG = NormalInverseGamma | Dirichlet
+
 class Mixed(eqx.Module):
-    normal: Normal
-    categorical: Categorical
+    dists: tuple[BaseF, ...]
 
     def __getitem__(self, key):
-        return Mixed(normal=self.normal[key], categorical=self.categorical[key])
+        return Mixed(dists=tuple([dist[key] for dist in self.dists]))
+
+type F = BaseF | Mixed
 
 class MixedConjugate(eqx.Module):
-    nig: NormalInverseGamma
-    dirichlet: Dirichlet
+    dists: tuple[BaseG, ...]
 
 class GEM(eqx.Module):
     alpha: Float[Array, "*batch"]
@@ -61,22 +64,14 @@ class Trace(eqx.Module):
     g: NormalInverseGamma | Dirichlet | MixedConjugate
     cluster: Cluster
 
-type F = Categorical | Normal | Mixed
 
-type Datapoint = Float[Array, "n_c"] | Integer[Array, "n_d"] | tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]
+type BaseDatapoint = Float[Array, "*batch n_c"] | Integer[Array, "*batch n_d"]
+type Datapoint = BaseDatapoint | tuple[BaseDatapoint, ...]
 
 class MixtureModel(eqx.Module):
     # mask: Datapoint
     pi: Float[Array, "*batch k"]
     f: F
-
-@dispatch
-def marginalize(dist: Normal | Categorical, idxs: tuple[int, ...]) -> Normal | Categorical:
-    return dist[idxs]
-
-@dispatch
-def marginalize(dist: Mixed, idxs: tuple[tuple[int, ...]]) -> Mixed:
-    return Mixed(normal=dist.normal[idxs[0]], categorical=dist.categorical[idxs[1]])
 
 @dispatch
 def sample(key: Array, dist: Dirichlet) -> Categorical:
@@ -100,11 +95,10 @@ def sample(key: Array, dist: NormalInverseGamma) -> Normal:
 
 @dispatch
 def sample(key: Array, dist: MixedConjugate) -> Mixed:
-    keys = jax.random.split(key)
-    normal = sample(keys[0], dist.nig)
-    categorical = sample(keys[1], dist.dirichlet)
+    keys = jax.random.split(key, len(dist.dists))
+    dists = tuple([sample(keys[i], dist.dists[i]) for i in range(len(dist.dists))])
 
-    return Mixed(normal=normal, categorical=categorical)
+    return Mixed(dists=dists)
 
 @dispatch
 def sample(key: Array, dist: Normal) -> Float[Array, "n_c"]:
@@ -116,11 +110,9 @@ def sample(key: Array, dist: Categorical) -> Integer[Array, "n_D"]:
 
 @dispatch
 def sample(key: Array, dist: Mixed) -> tuple[Float[Array, "n_c"], Integer[Array, "n_d"]]:
-    keys = jax.random.split(key)
-    normal = sample(keys[0], dist.normal)
-    categorical = sample(keys[1], dist.categorical)
-
-    return normal, categorical
+    keys = jax.random.split(key, len(dist.dists))
+    dists = tuple([sample(keys[i], dist.dists[i]) for i in range(len(dist.dists))])
+    return dists
 
 @dispatch 
 def sample(key: Array, dist: MixtureModel):
@@ -130,17 +122,22 @@ def sample(key: Array, dist: MixtureModel):
 
 @dispatch
 def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Integer[Array, "batch n_categorical_dim"]]) -> MixedConjugate:
-    nig = posterior(dist.nig, x[0])
-    dirichlet = posterior(dist.dirichlet, x[1])
+    dists = tuple([posterior(dist.dists[i], x[i]) for i in range(len(dist.dists))])
 
-    return MixedConjugate(nig=nig, dirichlet=dirichlet)
+    return MixedConjugate(dists=dists)
 
 @dispatch
-def posterior(dist: MixedConjugate, x: tuple[Float[Array, "batch n_normal_dim"], Integer[Array, "batch n_categorical_dim"]], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> MixedConjugate:
-    nig = posterior(dist.nig, x[0], c, max_clusters)
-    dirichlet = posterior(dist.dirichlet, x[1], c, max_clusters)
+def posterior(dist: MixedConjugate, x: tuple[BaseDatapoint, ...], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> MixedConjugate:
+    dists = tuple([posterior(dist.dists[i], x[i], c, max_clusters) for i in range(len(dist.dists))])
 
-    return MixedConjugate(nig=nig, dirichlet=dirichlet)
+    return MixedConjugate(dists=dists)
+
+@dispatch
+def posterior(dist: MixedConjugate, x: Integer[Array, "batch n_dim"], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> MixedConjugate:
+    dists = tuple([posterior(dist.dists[i], x[i], c, max_clusters) for i in range(len(dist.dists))])
+
+    return MixedConjugate(dists=dists)
+###
 
 @dispatch
 def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> NormalInverseGamma:
@@ -189,8 +186,8 @@ def logpdf(dist: Categorical, x: Integer[Array, "n_dim"]) -> Float[Array, ""]:
     return jnp.nansum(dist.logprobs.at[jnp.arange(x.shape[-1]), x].get(mode="fill", fill_value=jnp.nan))
 
 @dispatch
-def logpdf(dist: Mixed, x: tuple[Float[Array, "n_normal_dim"], Integer[Array, "n_categorical_dim"]]) -> Float[Array, ""]:
-    return logpdf(dist.normal, x[0]) + logpdf(dist.categorical, x[1])
+def logpdf(dist: Mixed, x: Datapoint) -> Float[Array, ""]:
+    return sum([logpdf(dist.dists[i], x[i]) for i in range(len(dist.dists))])
 
 @dispatch
 def logpdf(dist: GEM, pi: Float[Array, "n"], K: Integer[Array, ""]) -> Float[Array, ""]:
@@ -214,10 +211,16 @@ def logpdf(dist: MixtureModel, x: Datapoint) -> Float[Array, ""]:
 
 @dispatch
 def logpdf(dist: MixedConjugate, x: Mixed)-> Float[Array, ""]:
-    return logpdf(dist.nig, x.normal) + logpdf(dist.dirichlet, x.categorical)
+    return sum([logpdf(dist.dists[i], x.dists[i]) for i in range(len(dist.dists))])
 
 @dispatch
 def logpdf(dist: NormalInverseGamma, x: Normal)-> Float[Array, ""]:
+    """Scores the mu and sigma parameters drawn from an inverse gamma prior.
+
+    Pr[sigma] = Gamma(1/sigma^2; loc=a, scale=1/b)
+    Pr[mu] = Normal(mu |  loc=m, scale=sigma/sqrt(l))
+
+    """
     std_logpdf = jax.scipy.stats.gamma.logpdf(x.std ** -2, dist.a, scale=1/dist.b)
     mu_logpdf = jax.scipy.stats.norm.logpdf(x.mu, loc=dist.m, scale=x.std / jnp.sqrt(dist.l))
     return jnp.sum(mu_logpdf + std_logpdf)
@@ -229,14 +232,17 @@ def logpdf(dist: Dirichlet, x: Categorical)-> Float[Array, ""]:
 
 def make_trace(
         key: jax.Array, alpha: Real, d: Real, 
-        data: tuple[Float[Array, "n n_c"], Integer[Array, "n n_d"]] | Float[Array, "n n_c"] | Integer[Array, "n n_d"], 
+        schema: dict,
+        data: Datapoint,
         max_clusters: int):
 
-    g = make_g(data)
+    g = make_g(schema)
 
     n = len(data[0]) if isinstance(data, tuple) else len(data)
     c = jnp.zeros(n, dtype=int)
 
+    if not isinstance(data, tuple):
+        data = (data,)
     g_prime = posterior(g, data, c, 2 * max_clusters)
 
     f = sample(key, g_prime)
@@ -247,30 +253,35 @@ def make_trace(
 
     return Trace(gem=gem, g=g, cluster=cluster)
 
-@dispatch
-def make_g(data: tuple[Float[Array, "n n_c"], Integer[Array, "n n_d"]]):
-    nig = make_g(data[0])
-    dirichlet = make_g(data[1])
+def make_g(schema: dict):
+    dists = []
+    if schema["types"]["normal"]:
+        dists.append(make_normal_g(schema))
+    if schema["types"]["categorical"]:
+        dtypes = schema["var_metadata"]["categorical_precisions"]
+        unique_dtypes = list(set(dtypes))
+        for dtype in unique_dtypes:
+            dists.append(make_categorical_g(schema, dtype))
 
-    return MixedConjugate(nig=nig, dirichlet=dirichlet)
+    return MixedConjugate(dists=dists)
 
-
-@dispatch
-def make_g(data: Float[Array, "n n_c"]):
-    n_continuous = data.shape[1]
+def make_normal_g(schema: dict):
+    n_continuous = len(schema["types"]["normal"])
 
     return NormalInverseGamma(
         m=jnp.zeros(n_continuous), l=jnp.ones(n_continuous), 
         a=jnp.ones(n_continuous), b=jnp.ones(n_continuous))
 
-@dispatch
-def make_g(data: Integer[Array, "n n_d"]):
-    n_discrete = data.shape[1]
-    n_categories = jnp.nanmax(data, axis=0) + 1
+def make_categorical_g(schema: dict, dtype: int):
+    dtypes = schema["var_metadata"]["categorical_precisions"]
+    n_discrete = len([d for d in dtypes if dtype == d])
+    n_categories = jnp.array([len(schema["var_metadata"][col]["levels"]) 
+                              for idx, col in enumerate(schema["types"]["categorical"]) 
+                              if dtypes[idx] == dtype])
     max_n_categories = jnp.max(n_categories).astype(int)
 
     cat_alpha = jnp.ones((n_discrete, max_n_categories))
-    mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) <= n_categories[:, None]
+    mask = jnp.tile(jnp.arange(max_n_categories), (n_discrete, 1)) < n_categories[:, None]
     cat_alpha = jnp.where(mask, cat_alpha, ZERO)
 
     return Dirichlet(alpha=cat_alpha)

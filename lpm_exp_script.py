@@ -14,32 +14,55 @@ from tqdm import tqdm
 import os
 import numpy as np
 import polars as pl
+import time
 
 
-def run_experiment(max_clusters, gibbs_iters, alpha, d, key, train_data, test_data, valid_data):
+def run_experiment(max_clusters, gibbs_iters, alpha, d, schema, train_data, test_data, valid_data, key):
     key, subkey = jax.random.split(key)
-    trace = make_trace(subkey, alpha, d, train_data, max_clusters)
+    trace = make_trace(subkey, alpha, d, schema, train_data, max_clusters)
 
     key, subkey = jax.random.split(key)
+    start = time.time()
     trace, sum_logprobs = smc(subkey, trace, test_data, max_clusters, train_data, gibbs_iters, max_clusters)
+    time_elapsed = time.time() - start
 
     idx = jnp.argmax(sum_logprobs)
+    print(f"idx: {idx}")
     cluster = trace.cluster[idx]
 
     mixture_model = MixtureModel(
         pi=cluster.pi/jnp.sum(cluster.pi), 
         f=cluster.f[:max_clusters])
-    return jax.vmap(logpdf, in_axes=(None, 0))(mixture_model, valid_data)
 
-def run_experiment_wrapper(key, dataset_name, n_replicates, max_clusters, gibbs_iters, alpha, d):
+    return time_elapsed, sum_logprobs, trace, jax.vmap(logpdf, in_axes=(None, 0))(mixture_model, valid_data)
+
+def run_experiment_wrapper(seed, dataset_name, n_replicates, max_clusters, gibbs_iters, alpha, d):
+    key = jax.random.PRNGKey(seed)
     keys = jax.random.split(key, n_replicates)
-    train_data, valid_data = load_huggingface(dataset_name)
-    train_data, test_data = split_data(train_data, .1)
+    schema, (train_data, valid_data) = load_huggingface(dataset_name)
 
-    partial_run_exp = partial(run_experiment, max_clusters, gibbs_iters, alpha, d)
+    train_data, test_data = split_data(train_data, .1, seed=seed)
 
-    logprobs = jax.vmap(partial_run_exp, in_axes=(0, None, None, None))(
-        keys, train_data, test_data, valid_data)
+    # reduce train size
+    if "sydt" in dataset_name:
+        train_data, _ = split_data(train_data, .9, seed=seed)
+    # elif "covertype" in dataset_name:
+    #     pass
+    # elif "kdd" in dataset_name:
+    #     train_data, _ = split_data(train_data, .1, seed=seed)
+
+    partial_run_exp = partial(run_experiment, max_clusters, gibbs_iters, alpha, d,
+        schema, train_data, test_data, valid_data)
+
+    # logprobs = jax.vmap(partial_run_exp, in_axes=(0, None, None, None))(
+    #     keys, train_data, test_data, valid_data)
+
+    # logprobs = jax.vmap(partial_run_exp)(keys)
+    time_elapsed, sum_logprobs, trace, logprobs = zip(*[partial_run_exp(k) for k in keys])
+
+    import ipdb; ipdb.set_trace()
+
+    logprobs = jnp.stack(logprobs)
 
     data_id = jnp.arange(logprobs.shape[1])
     data_id = jnp.tile(data_id, (n_replicates, 1))
@@ -53,26 +76,28 @@ def run_experiment_wrapper(key, dataset_name, n_replicates, max_clusters, gibbs_
         "logprob": np.array(logprobs.flatten())
     })
 
-    path = Path("results", dataset_name, "held-out-likelihood.parquet")
+    path = Path("results_no_rejuvenation", dataset_name, "held-out-likelihood.parquet")
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
 
-os.environ["HF_KEY"] = "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"
 login(token=os.environ.get("HF_KEY"))
 
 api = HfApi()
 dataset = api.dataset_info("Large-Population-Model/model-building-evaluation")
 config = dataset.card_data['configs']
 
-# temporary: filter out LPM datasets
-dataset_names = [c['config_name'].replace("-", "/", 1) 
-    for c in config if "LPM" not in c['config_name']]
-n_replicates = 10
-key = jax.random.PRNGKey(1234)
-max_clusters = 50
+
+dataset_names = [c['data_files'][0]['path'].rpartition('/')[0] for c in config]
+# dataset_names = [c for c in dataset_names if ("CTGAN" in c) and ("covertype" not in c)]
+# dataset_names = [c for c in dataset_names if ("CTGAN" in c) or ("lpm" in c)]
+dataset_names = [c for c in dataset_names if "CES" in c]
+n_replicates = 1
+seed = 1234
+max_clusters = 300
 alpha = 2
 d = .1
 gibbs_iters = 20
 
 for dataset_name in tqdm(dataset_names):
-    run_experiment_wrapper(key, dataset_name, n_replicates, max_clusters, gibbs_iters, alpha, d)
+    print(dataset_name)
+    run_experiment_wrapper(seed, dataset_name, n_replicates, max_clusters, gibbs_iters, alpha, d)

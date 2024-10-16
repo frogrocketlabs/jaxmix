@@ -142,7 +142,7 @@ def test_mixed():
 
     categorical_params = Categorical(logprobs=logprobs)
 
-    mixed_params = Mixed(normal=normal_params, categorical=categorical_params)
+    mixed_params = Mixed(dists=(normal_params, categorical_params,))
 
     logp = logpdf(mixed_params, (jnp.array([0.0, 0.0]), jnp.array([0, 1])))
 
