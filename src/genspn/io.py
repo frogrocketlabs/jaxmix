@@ -155,14 +155,9 @@ def make_schema(df: pl.DataFrame):
 
 
 def _assert_keys_mixture(mixture_parameters):
-    heterogeneous = {"cluster_weights", "mu", "sigma", "logprobs"}
-    numerical = {"cluster_weights", "mu", "sigma"}
-    categorical = {"cluster_weights", "logprobs"}
-    assert set(mixture_parameters.keys()) == heterogeneous or \
-            set(mixture_parameters.keys()) == numerical or \
-            set(mixture_parameters.keys()) == categorical, \
-            "wrong keys for parameter record. pi cannot be null;" + \
-            "either mu and std are not null or logprobs are not null"
+    possible_keys_non_log_prob = {"cluster_weights", "mu", "sigma", "number_different_categorical_types"}
+    for key in mixture_parameters.keys():
+        assert (key in possible_keys_non_log_prob) or key.startswith("logprob")
 
 def serialize(mixture_parameters, path):
     _assert_keys_mixture(mixture_parameters)
