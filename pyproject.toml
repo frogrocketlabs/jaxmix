@@ -11,9 +11,9 @@ dependencies = [
     "jaxtyping>=0.2.29",
     "pytest>=8.2.2",
     "plum-dispatch>=2.4.1",
-    "jaxlib[cuda12_pip]>=0.4.29",
     "ipdb>=0.13.13",
-    "jax[cuda12]>=0.4.29",
+    "jax>=0.4.29",
+    "jaxlib>=0.4.29",
     "marimo>=0.6.19",
     "altair>=5.3.0",
     "polars>=0.20.31",
@@ -24,6 +24,12 @@ dependencies = [
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
+
+[project.optional-dependencies]
+cuda = [
+    "jax[cuda12]>=0.4.29",
+    "jaxlib[cuda12_pip]>=0.4.29",
+]
 
 [build-system]
 requires = ["hatchling"]
