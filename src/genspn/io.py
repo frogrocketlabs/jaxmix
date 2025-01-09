@@ -24,8 +24,10 @@ def dataframe_to_arrays(df: pl.DataFrame):
 
     numerical_array  = None if numerical_df.is_empty() else jnp.array(numerical_df.to_numpy())
     categorical_arrays, schema = (None, schema) if categorical_df.is_empty() else categorical_df_to_integer(categorical_df, schema)
-
-    return schema, (numerical_array, *categorical_arrays)
+    if categorical_arrays is None:
+        return schema, (numerical_array,)
+    else:
+        return schema, (numerical_array, *categorical_arrays)
 
 
 def categorical_df_to_integer(df: pl.DataFrame, schema: dict):
