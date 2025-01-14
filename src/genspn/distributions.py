@@ -141,7 +141,7 @@ def posterior(dist: MixedConjugate, x: Integer[Array, "batch n_dim"], c: Integer
 
 @dispatch
 def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"], c: Integer[Array, "batch"], max_clusters:Optional[int]=None) -> NormalInverseGamma:
-    N = jax.ops.segment_sum(jnp.ones(x.shape[0], dtype=jnp.int32), c, num_segments=max_clusters)
+    N = jax.ops.segment_sum(jnp.invert(jnp.isnan(x)).astype(jnp.int32), c, num_segments=max_clusters)
     masked_x = jnp.nan_to_num(x, 0.)
     sum_x = jax.ops.segment_sum(masked_x, c, num_segments=max_clusters)
     sum_x_sq = jax.ops.segment_sum(masked_x ** 2, c, num_segments=max_clusters)
@@ -150,14 +150,14 @@ def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"], c: Integ
 
 @dispatch
 def posterior(dist: NormalInverseGamma, x: Float[Array, "batch n_dim"]) -> NormalInverseGamma:
-    N = x.shape[0]
+    N = jnp.sum(jnp.invert(jnp.isnan(x)).astype(jnp.int32), axis=0)
     sum_x = jnp.nansum(x, axis=0)
     sum_x_sq = jnp.nansum(x ** 2, axis=0)
 
     return posterior(dist, N, sum_x, sum_x_sq)
 
 @dispatch
-def posterior(dist: NormalInverseGamma, N: Integer[Array, ""], sum_x: Float[Array, "n_dim"], sum_x_sq: Float[Array, "n_dim"]) -> NormalInverseGamma:
+def posterior(dist: NormalInverseGamma, N: Integer[Array, "n_dim"], sum_x: Float[Array, "n_dim"], sum_x_sq: Float[Array, "n_dim"]) -> NormalInverseGamma:
     l = dist.l + N
     m = (dist.l * dist.m + sum_x) / l
     a = dist.a + N / 2

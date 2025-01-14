@@ -34,7 +34,7 @@ def test_score_stick_breaking():
         jax.scipy.stats.beta.logpdf(1 - pis1[1]/pis1[0], 1 - d, alpha + 2 * d)
     )
 
-def test_score_data():
+def test_score_data_normal():
     x = jnp.zeros((5, 6))
     c = jnp.array([0, 1, 0, 1, 0], dtype=int)
 
@@ -52,6 +52,24 @@ def test_score_data():
     assert x_logpdfs[2] == x_logpdfs[5]
     assert x_logpdfs[1] == x_logpdfs[3]
     assert x_logpdfs[0] != x_logpdfs[1]
+
+def test_score_data_normal_with_null():
+    x_ones = jnp.array([[1.,1.]])
+    x_zeros = jnp.array([[0.,0.]])
+    x_zeros_with_none = jnp.array([[0.,None]])
+    dist  = Normal(
+        mu=jnp.array([[2,3], [4,5]]),
+        std=jnp.vstack((
+            jnp.ones(2),
+            jnp.ones(2),
+        )))
+
+    logpdfs_ones = jax.vmap(logpdf, in_axes=(None, 0))(dist, x_ones)
+    logpdfs_zeros = jax.vmap(logpdf, in_axes=(None, 0))(dist, x_zeros)
+    logpdfs_x_zeros_with_none = jax.vmap(logpdf, in_axes=(None, 0))(dist, x_zeros_with_none)
+    assert logpdfs_ones[0] != logpdfs_zeros[0]
+    assert logpdfs_x_zeros_with_none[0] != logpdfs_zeros[0]
+    assert logpdfs_x_zeros_with_none[0] > logpdfs_zeros[0]
 
 def test_score_trace_cluster():
     """

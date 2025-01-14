@@ -22,6 +22,87 @@ def test_posterior_dirichlet():
     assert jnp.all(dirichlet_posterior.alpha[1] == jnp.array([3 + 3, 4 + 1, -jnp.inf]))
 
 
+def test_posterior_nig_with_nans():
+    # adapted from cgpm https://github.com/probcomp/cgpm/blob/master/tests/test_teh_murphy.py
+    n = jnp.array(10)
+    n_dim = 4
+    key = jax.random.PRNGKey(1234)
+    x = jax.random.normal(key, shape=(n, n_dim))
+
+    # drop some values into NaNs.
+    nans = [0,1,2,3]
+    i = 0
+    for col in range(len(nans)):
+        i += 1
+        for o in range(nans[col]):
+            x = x.at[i,o].set(jnp.nan)
+
+    all_m = jnp.array((1., 7., .43, 1.2))
+    all_l = jnp.array((2., 18., 3., 11.))
+    all_a = jnp.array((2., .3, 7., 4.))
+    all_b = jnp.array((1., 3., 7.5, 22.5))
+
+    h = NormalInverseGamma(all_m, all_l, all_a, all_b)
+    h_prime = posterior(h, x)
+
+    def check_posterior(x, mu, l, a, b):
+        xbar = jnp.nanmean(x, axis=0)
+        N = jnp.sum(jnp.invert(jnp.isnan(x)).astype(jnp.int32))
+        ln = l + N
+        an = a + N/2.
+        mun = (l*mu+N*xbar)/(l+N)
+        bn = b + .5*jnp.nansum((x-xbar)**2) + l*N*(xbar-mu)**2 / (2*(l+N))
+        return mun, ln, an, bn
+
+    mun, ln, an, bn = jax.vmap(check_posterior, in_axes=(1, 0, 0, 0, 0))(x, all_m, all_l, all_a, all_b)
+
+    assert jnp.allclose(mun, h_prime.m)
+    assert jnp.allclose(ln, h_prime.l)
+    assert jnp.allclose(an, h_prime.a)
+    assert jnp.allclose(bn, h_prime.b)
+
+def test_posterior_nig_cluster_with_nans():
+    # adapted from cgpm https://github.com/probcomp/cgpm/blob/master/tests/test_teh_murphy.py
+    n = jnp.array(10)
+    n_dim = 4
+    key = jax.random.PRNGKey(1234)
+    x = jax.random.normal(key, shape=(n, n_dim))
+
+    # drop some values into NaNs.
+    nans = [0,1,2,3]
+    i = 0
+    for col in range(len(nans)):
+        i += 1
+        for o in range(nans[col]):
+            x = x.at[i,o].set(jnp.nan)
+
+    all_m = jnp.array((1., 7., .43, 1.2))
+    all_l = jnp.array((2., 18., 3., 11.))
+    all_a = jnp.array((2., .3, 7., 4.))
+    all_b = jnp.array((1., 3., 7.5, 22.5))
+
+    c = jnp.repeat(jnp.array([0, 1, 2, 3]), n)
+
+    h = NormalInverseGamma(all_m, all_l, all_a, all_b)
+    h_prime = jax.vmap(posterior, in_axes=(0, None, None))(h, x.T.reshape(-1, 1), c)
+
+    def check_posterior(x, mu, l, a, b):
+        xbar = jnp.nanmean(x)
+        N = jnp.sum(jnp.invert(jnp.isnan(x)).astype(jnp.int32))
+        ln = l + N
+        an = a + N/2.
+        mun = (l*mu+N*xbar)/(l+N)
+        bn = b + .5*jnp.nansum((x-xbar)**2) + l*N*(xbar-mu)**2 / (2*(l+N))
+        return mun, ln, an, bn
+
+    mun, ln, an, bn = jax.vmap(check_posterior, in_axes=(1, 0, 0, 0, 0))(x, all_m, all_l, all_a, all_b)
+
+    idxs = ((0, 1, 2, 3), (0, 1, 2, 3))
+    assert jnp.allclose(mun, h_prime.m[idxs].ravel())
+    assert jnp.allclose(ln, h_prime.l[idxs].ravel())
+    assert jnp.allclose(an, h_prime.a[idxs].ravel())
+    assert jnp.allclose(bn, h_prime.b[idxs].ravel())
+
 def test_posterior_nig():
     # adapted from cgpm https://github.com/probcomp/cgpm/blob/master/tests/test_teh_murphy.py
     n = jnp.array(100)
@@ -37,7 +118,7 @@ def test_posterior_nig():
     all_b = jnp.array((1., 3., 7.5, 22.5))
 
     h = NormalInverseGamma(all_m, all_l, all_a, all_b)
-    h_prime = posterior(h, n, sum_x, sum_x_sq)
+    h_prime = posterior(h, jnp.repeat(n, n_dim), sum_x, sum_x_sq)
 
     def check_posterior(x, mu, l, a, b):
         xbar = jnp.mean(x)
