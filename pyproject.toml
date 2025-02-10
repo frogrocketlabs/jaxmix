@@ -48,7 +48,3 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/genspn"]
-
-[[sources]]
-name = "gcp"
-url = "https://us-west1-python.pkg.dev/probcomp-caliban/probcomp/simple/"
