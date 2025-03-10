@@ -15,7 +15,6 @@ dependencies = [
     "jax>=0.4.29",
     "jaxlib>=0.4.29",
     "jaxtyping>=0.2.29",
-    "keyrings-google-artifactregistry-auth>=1.1.2",
     "marimo>=0.6.19",
     "plum-dispatch>=2.4.1",
     "polars>=0.20.31",
@@ -38,10 +37,6 @@ build-backend = "hatchling.build"
 
 [tool.poetry]
 requires-poetry = ">=2.0"
-
-[tool.rye]
-managed = true
-dev-dependencies = []
 
 [tool.hatch.metadata]
 allow-direct-references = true
