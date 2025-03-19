@@ -27,8 +27,7 @@ requires-python = ">= 3.9"
 
 [project.optional-dependencies]
 cuda = [
-    "jax[cuda12]>=0.4.29",
-    "jaxlib[cuda12]>=0.4.29",
+    "jax[cuda]>=0.4.29",
 ]
 
 [build-system]
