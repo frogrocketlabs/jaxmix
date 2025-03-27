@@ -1,6 +1,6 @@
 [project]
-name = "genspn"
-version = "0.1.0"
+name = "jaxmix"
+dynamic = ["version"]
 description = "Add your description here"
 authors = [
     { name = "Joao Loula", email = "jloula@mit.edu" }
@@ -23,7 +23,7 @@ dependencies = [
     "safetensors>=0.4.5",
 ]
 readme = "README.md"
-requires-python = ">= 3.9"
+requires-python = ">= 3.11"
 
 [project.optional-dependencies]
 cuda = [
@@ -31,14 +31,7 @@ cuda = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=64.0", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
 
-[tool.poetry]
-requires-poetry = ">=2.0"
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/genspn"]
+[tool.setuptools_scm]

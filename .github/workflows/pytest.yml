@@ -1,0 +1,31 @@
+name: Codebase tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11.5
+          cache: 'pip'
+
+      - name: Run Tests
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -e .
+          pytest test
